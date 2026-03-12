@@ -1,5 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.patches import Ellipse
+import matplotlib.transforms as transforms
 
 # EKI 모듈 임포트
 from src.graph.EKIcore import VNode as VNodeEKI, FactorGraph as GraphEKI
@@ -128,7 +130,7 @@ def build_scenario():
         'V6': np.array([0, 10]), 'V7': np.array([5, 10]), 'V8': np.array([10, 10])
     }
 
-    anchors  = ['V6', 'V8', 'V0'] 
+    anchors  = ['V6', 'V4'] 
     unknowns = [k for k in GT if k not in anchors]
 
     edges = [
@@ -151,7 +153,7 @@ def build_scenario():
         if name in anchors:
             initial_guesses[name] = GT[name].copy().astype(float)
         else:
-            initial_guesses[name] = GT[name].copy().astype(float) + np.random.randn(2) * 1.0
+            initial_guesses[name] = GT[name].copy().astype(float) + np.random.randn(2) * 2.0
 
     return GT, anchors, unknowns, edges, measurements, initial_guesses, anchor_noise, ro_noise
 
@@ -279,7 +281,7 @@ def run_test():
         rmse[algo].append(get_rmse(vnodes_d[algo], algo))
 
     n_iter     = 100
-    decay_rate = 0.9
+    decay_rate = 0.5
 
     print("=" * 70)
     print(f"{'Iter':>4} | {'EKI':>6} | {'GaBP':>6} | {'DEKI_c':>6} | "
@@ -403,7 +405,231 @@ def run_test():
     plt.tight_layout()
     plt.show()
 
+# ─────────────────────────────────────────────────────────────────────────────
+# 6. D-EKI (Residual) 앙상블(파티클) 진화 시각화 (초기 스텝 집중)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def run_ensemble_visualization():
+    # 1. 시나리오 및 DEKI_res 단일 그래프 빌드
+    GT, anchors, unknowns, edges_list, measurements, \
+        initial_guesses, anchor_noise, ro_noise = build_scenario()
+
+    graph, vnodes = build_graph(
+        'DEKI_cov', GT, anchors, unknowns, edges_list,
+        measurements, initial_guesses, anchor_noise, ro_noise
+    )
+
+    # 관찰할 초기 스텝들 (초반에 빠르게 수렴하므로 초반에 집중)
+    target_iters = [0, 1, 2, 5, 10, 20]
+    snapshots = {}
+    decay_rate = 0.1
+
+    # [Step 0] 초기 파티클 상태 저장
+    snapshots[0] = {n: vnodes[n].ensemble.copy() for n in unknowns}
+
+    print("Running D-EKI (Residual) Ensemble Simulation...")
+    
+    # [Step 1 ~ 20] 시뮬레이션 진행 및 타겟 스텝마다 파티클 저장
+    for i in range(1, max(target_iters) + 1):
+        graph.iterate(1)
+        
+        # EKI Annealing 적용
+        for vn in vnodes.values():
+            vn.noise_std *= decay_rate
+            
+        if i in target_iters:
+            snapshots[i] = {n: vnodes[n].ensemble.copy() for n in unknowns}
+            print(f"Captured snapshot at iteration {i}")
+
+    # 2. 시각화 (2x3 그리드)
+    plt.style.use('seaborn-v0_8-whitegrid')
+    fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+    fig.suptitle("D-EKI (Residual) Ensemble Evolution in Early Iterations", 
+                 fontsize=18, fontweight='bold')
+
+    axes = axes.flatten()
+    colors = plt.cm.tab10(np.linspace(0, 1, len(unknowns)))
+
+    for idx, step in enumerate(target_iters):
+        ax = axes[idx]
+        ax.set_title(f"Iteration {step}", fontsize=14, fontweight='bold')
+        
+        # Ground Truth 및 엣지 그리기
+        for n1, n2 in edges_list:
+            ax.plot([GT[n1][0], GT[n2][0]], [GT[n1][1], GT[n2][1]], 
+                    'k--', alpha=0.2, linewidth=1)
+            
+        for a in anchors:
+            ax.scatter(GT[a][0], GT[a][1], c='red', marker='s', 
+                       s=150, edgecolors='k', zorder=5, label='Anchor' if idx==0 else "")
+            
+        # 미지 노드들의 GT 위치 (별표)
+        for c_idx, name in enumerate(unknowns):
+            ax.scatter(GT[name][0], GT[name][1], c=[colors[c_idx]], marker='*', 
+                       s=200, edgecolors='k', zorder=6)
+
+        # 앙상블(파티클 구름) 산점도 그리기
+        current_particles = snapshots[step]
+        for c_idx, name in enumerate(unknowns):
+            particles = current_particles[name] # shape: (2, N)
+            ax.scatter(particles[0, :], particles[1, :], 
+                       color=colors[c_idx], s=5, alpha=0.15, zorder=3)
+            
+            # 앙상블의 평균점 (현재 추정치)
+            mean_est = particles.mean(axis=1)
+            ax.scatter(mean_est[0], mean_est[1], c=[colors[c_idx]], marker='o', 
+                       s=80, edgecolors='black', zorder=4)
+
+        ax.set_xlim(-5, 15)
+        ax.set_ylim(-5, 15)
+        ax.set_aspect('equal')
+        
+        if idx == 0:
+            ax.legend(loc='upper right')
+
+    plt.tight_layout()
+    plt.show()
+
+def draw_confidence_ellipse(mu, cov, ax, n_std, edgecolor, **kwargs):
+    """ 공분산 행렬을 바탕으로 카이제곱 신뢰 구간 타원(등고선)을 그리는 함수 """
+    # 공분산 행렬이 정상적이지 않은 경우(발산) 처리
+    if not np.all(np.isfinite(cov)) or np.any(np.diag(cov) < 0):
+        return False
+        
+    try:
+        # 고유값과 고유벡터 계산 (타원의 회전 각도와 축 길이 도출)
+        eigenvals, eigenvecs = np.linalg.eigh(cov)
+        
+        # 음수 고유값이 나오면 (Not Positive Semi-Definite) 예외 처리
+        if np.any(eigenvals <= 0):
+            return False
+
+        # 크기순 정렬
+        order = eigenvals.argsort()[::-1]
+        eigenvals, eigenvecs = eigenvals[order], eigenvecs[:, order]
+        
+        # 회전 각도 계산
+        angle = np.degrees(np.arctan2(*eigenvecs[:, 0][::-1]))
+        
+        # 타원의 너비와 높이 계산 (2 * n_std * 고유값의 제곱근)
+        width, height = 2 * n_std * np.sqrt(eigenvals)
+        
+        # 타원 객체 생성 및 추가
+        ellipse = Ellipse(xy=mu, width=width, height=height, angle=angle, 
+                          edgecolor=edgecolor, facecolor='none', **kwargs)
+        ax.add_patch(ellipse)
+        return True
+    except Exception:
+        return False
+
+def run_gabp_visualization():
+    # 1. 시나리오 및 GaBP 그래프 빌드
+    # (앞서 정의된 build_scenario, build_graph 함수가 필요합니다)
+    GT, anchors, unknowns, edges_list, measurements, \
+        initial_guesses, anchor_noise, ro_noise = build_scenario()
+
+    graph, vnodes = build_graph(
+        'GaBP', GT, anchors, unknowns, edges_list,
+        measurements, initial_guesses, anchor_noise, ro_noise
+    )
+
+    target_iters = [0, 1, 2, 5, 10, 20]
+    snapshots = {}
+
+    snapshots[0] = {}
+    for n in unknowns:
+        # 초기 공분산 (임의의 넓은 원형 불확실성)
+        snapshots[0][n] = {'mu': vnodes[n].mu.flatten(), 'cov': np.eye(2) * 25.0}
+
+    print("Running GaBP Covariance Simulation...")
+    
+    for i in range(1, max(target_iters) + 1):
+        graph.iterate(1)
+        
+        if i in target_iters:
+            snapshots[i] = {}
+            for n in unknowns:
+                vn = vnodes[n]
+                mu = vn.mu.flatten().copy()
+                
+                # 정보 행렬(Lambda)의 역행렬로 공분산(Sigma) 도출
+                if hasattr(vn, 'Lambda'):
+                    try:
+                        cov = np.linalg.inv(vn.Lambda)
+                    except np.linalg.LinAlgError:
+                        cov = np.eye(2) * 9999.0 # 발산 시 무한대로 취급
+                else:
+                    cov = np.eye(2) * 5.0
+
+                snapshots[i][n] = {'mu': mu, 'cov': cov}
+
+    # 2. 시각화 (2x3 그리드)
+    plt.style.use('seaborn-v0_8-whitegrid')
+    fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+    fig.suptitle("GaBP Belief Evolution (Chi-Square Confidence Ellipses)", 
+                 fontsize=18, fontweight='bold')
+
+    axes = axes.flatten()
+    colors = plt.cm.tab10(np.linspace(0, 1, len(unknowns)))
+
+    # 카이제곱 분포 기준 n_std 설정 (2D Gaussian 기준)
+    # 1-sigma (~39%), 2-sigma (~86%), 3-sigma (~99%)
+    confidence_levels = [
+        (1.0, 1.0, '-'),   # 1-sigma: 굵은 실선
+        (2.0, 0.6, '--'),  # 2-sigma: 중간 점선
+        (3.0, 0.3, ':')    # 3-sigma: 얇은 투명 점선
+    ]
+
+    for idx, step in enumerate(target_iters):
+        ax = axes[idx]
+        ax.set_title(f"Iteration {step}", fontsize=14, fontweight='bold')
+        
+        # Ground Truth 및 엣지
+        for n1, n2 in edges_list:
+            ax.plot([GT[n1][0], GT[n2][0]], [GT[n1][1], GT[n2][1]], 
+                    'k--', alpha=0.2, linewidth=1)
+            
+        for a in anchors:
+            ax.scatter(GT[a][0], GT[a][1], c='red', marker='s', 
+                       s=150, edgecolors='k', zorder=5)
+            
+        for c_idx, name in enumerate(unknowns):
+            ax.scatter(GT[name][0], GT[name][1], c=[colors[c_idx]], marker='*', 
+                       s=200, edgecolors='k', zorder=6)
+
+        # 등고선 그리기
+        current_state = snapshots[step]
+        for c_idx, name in enumerate(unknowns):
+            mu = current_state[name]['mu']
+            cov = current_state[name]['cov']
+            
+            # 중심점
+            ax.scatter(mu[0], mu[1], c=[colors[c_idx]], marker='o', 
+                       s=80, edgecolors='black', zorder=4)
+
+            # 신뢰 구간 등고선 그리기
+            success = True
+            for n_std, alpha, linestyle in confidence_levels:
+                if not draw_confidence_ellipse(mu, cov, ax, n_std=n_std, 
+                                               edgecolor=colors[c_idx], 
+                                               alpha=alpha, linestyle=linestyle, linewidth=2):
+                    success = False
+                    break
+            
+            # 발산해서 공분산이 깨진 경우
+            if not success and idx > 0:
+                ax.text(mu[0] + 0.5, mu[1] + 0.5, "Covariance Diverged!", 
+                        color='red', fontsize=10, fontweight='bold')
+
+        ax.set_xlim(-10, 20)
+        ax.set_ylim(-10, 20)
+        ax.set_aspect('equal')
+
+    plt.tight_layout()
+    plt.show()
 
 
 if __name__ == "__main__":
-    run_test()
+    # run_test()
+    run_ensemble_visualization()
+    # run_gabp_visualization()

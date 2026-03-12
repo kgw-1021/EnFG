@@ -35,10 +35,10 @@ class VNode(Node):
         # --- ADMM Parameters ---
         rho_init: float = 1.0,
         rho_update_method: str = 'covariance',  # 'covariance', 'residual', 'fixed'
-        rho_max: float = 0.3,
+        rho_max: float = 100.0,
         alpha_cov: float = 1.0,     # For 'covariance' method
-        mu_res: float = 10.0,       # For 'residual' method
-        tau_res: float = 2.0        # For 'residual' method
+        mu_res: float = 5.0,       # For 'residual' method
+        tau_res: float = 1.5,        # For 'residual' method
     ) -> None:
         super().__init__(name, dims)
         self.n_particles = n_particles
