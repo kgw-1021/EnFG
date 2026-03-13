@@ -5,18 +5,18 @@ from src.graph.DEKICore import FactorGraph, VNode
 
 # 작성해주신 새로운 팩터들 임포트
 from src.graph.factors import (
-    GoalFactor, DynamicsFactor, CollisionFactor, 
+    GoalFactor, DynamicsFactor, CollisionFactor, GridObsFactor,
     VelocityConstraintFNode, ControlSmoothnessFNode, StartFactor
     )
 
 class Agent:
-    def __init__(self, agent_id: int, start_pos: np.ndarray, goal_pos: np.ndarray, horizon: int = 10, dt: float = 0.1):
+    def __init__(self, agent_id: int, start_pos: np.ndarray, goal_pos: np.ndarray, horizon: int = 10, dt: float = 0.1, env_map=None):
         self.id = agent_id
         self.horizon = horizon
         self.dt = dt
         self.goal_pos = goal_pos
         self.start_pos = start_pos
-
+        self.env_map = env_map
         # D-EKI를 위한 Factor Graph 초기화
         self.graph = FactorGraph(max_workers=2) 
         
@@ -74,6 +74,19 @@ class Agent:
             vel_factor = VelocityConstraintFNode(f"Vel_A{self.id}_t{t}", v_max=2.0, v_min=-0.5, weight=1.0)
             self.graph.nodes.append(vel_factor)
             self.graph.connect(vel_factor, self.vnodes[t])
+
+        if env_map is not None:
+            for t in range(horizon):
+                # 앞서 병렬화 최적화가 적용된 BlackBoxGridFactor 사용
+                bb_factor = GridObsFactor(
+                    name=f"BB_Obstacle_A{self.id}_t{t}", 
+                    occupancy_map_func=env_map.get_penalty, 
+                    margin=0.5,       
+                    num_samples=8, 
+                    weight=1e-4
+                )
+                self.graph.nodes.append(bb_factor)
+                self.graph.connect(bb_factor, self.vnodes[t])
 
         start_factor = StartFactor(f"Start_A{self.id}", start_pos=self.start_pos, weight=1e-5)
         self.graph.nodes.append(start_factor)

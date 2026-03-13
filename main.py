@@ -6,6 +6,7 @@ import time
 # 기존 모듈들 임포트
 from src.graph.agent import Agent
 from src.communication.shared_mem import CommunicationSharedMemory
+from src.map.map_generator import EnvironmentMap, CircleObstacle, RectangleObstacle
 
 def generate_circular_scenario(num_agents: int, center_x: float = 5.0, center_y: float = 5.0, radius: float = 5.0, initial_v: float = 0.5):
     """
@@ -37,7 +38,7 @@ def generate_circular_scenario(num_agents: int, center_x: float = 5.0, center_y:
     return start_poses, goal_poses
 
 def run_agent_process(agent_id: int, start_pos: np.ndarray, goal_pos: np.ndarray, 
-                      num_agents: int, horizon: int, dt: float, max_iter: int, 
+                      num_agents: int, horizon: int, dt: float, max_iter: int, env_map: EnvironmentMap,
                       barrier: mp.Barrier):
     """
     각 로봇(에이전트)이 독립적인 프로세스에서 실행할 메인 워커(Worker) 함수.
@@ -45,7 +46,7 @@ def run_agent_process(agent_id: int, start_pos: np.ndarray, goal_pos: np.ndarray
     print(f"[Agent {agent_id}] Process Started.")
     
     # 1. 프로세스 내부에서 자기 자신의 에이전트 객체 생성 (메모리 완전 독립)
-    agent = Agent(agent_id=agent_id, start_pos=start_pos, goal_pos=goal_pos, horizon=horizon, dt=dt)
+    agent = Agent(agent_id=agent_id, start_pos=start_pos, goal_pos=goal_pos, horizon=horizon, dt=dt, env_map=env_map)
     
     # 타 에이전트와의 충돌 팩터 부착
     for other_id in range(num_agents):
@@ -113,10 +114,10 @@ def check_collision(trajectories: dict, robot_radius: float = 0.3) -> bool:
 
 def main():
     # 시뮬레이션 파라미터 세팅
-    HORIZON = 30
-    DT = 0.1
-    MAX_ITER = 30
-    NUM_AGENTS = 12
+    HORIZON = 50
+    DT = 0.05
+    MAX_ITER = 50
+    NUM_AGENTS = 10
     
     start_poses, goal_poses = generate_circular_scenario(
         num_agents=NUM_AGENTS, 
@@ -125,6 +126,9 @@ def main():
         radius=5.0, 
         initial_v=0.0
     )
+
+    env = None
+    # env.visualize(x_range=(-2, 12), y_range=(-2, 12), resolution=0.05)
 
     # ==========================================================
     # 1. 공유 자원(Shared Memory & Barrier) 생성
@@ -140,7 +144,7 @@ def main():
     processes = []
     for i in range(NUM_AGENTS):
         p = mp.Process(target=run_agent_process, args=(
-            i, start_poses[i], goal_poses[i], NUM_AGENTS, HORIZON, DT, MAX_ITER, barrier
+            i, start_poses[i], goal_poses[i], NUM_AGENTS, HORIZON, DT, MAX_ITER, env, barrier
         ))
         processes.append(p)
         p.start()
@@ -209,14 +213,13 @@ def main():
 
     # 3. 애니메이션 객체 생성 (interval=200 은 프레임당 0.2초 대기를 의미)
     ani = animation.FuncAnimation(fig, animate, frames=HORIZON, 
-                                init_func=init, blit=True, interval=400, repeat=True)
+                                init_func=init, blit=True, interval=200, repeat=True)
 
     plt.tight_layout()
     plt.show()
 
     plt.figure(figsize=(10, 8))
     # plt.title("Decentralized Multi-Robot D-EKI (Multiprocessing)", fontsize=16, fontweight='bold')
-  
     colors = plt.cm.tab10(np.linspace(0, 1, NUM_AGENTS))
     
     for i in range(NUM_AGENTS):
@@ -226,14 +229,13 @@ def main():
         # 각 에이전트 고유의 색상 할당
         c = colors[i]
         
-        plt.scatter(px[0], py[0], color=c, marker='s', s=100, edgecolors='black', label=f"A{i} Start")
+        plt.scatter(px[0], py[0], color=c, marker='s', s=100, edgecolors='black')
         # plt.scatter(goal_poses[i][0], goal_poses[i][1], color=c, marker='*', s=250, edgecolors='black', label=f"A{i} Goal")
         plt.plot(px, py, color=c, marker='o', markersize=4, linestyle='-', alpha=0.7, label=f"A{i} Path")
     plt.xlim(-2, 12)
     plt.ylim(-2, 12)
     plt.grid(True, linestyle='--', alpha=0.6)
 
-    # 범례(Legend)가 너무 많아지면 그래프를 가리므로 바깥쪽에 배치
     plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=9)
     plt.xlabel("X Position (m)")
     plt.ylabel("Y Position (m)")
