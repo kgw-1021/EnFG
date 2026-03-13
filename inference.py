@@ -130,7 +130,7 @@ def build_scenario():
         'V6': np.array([0, 10]), 'V7': np.array([5, 10]), 'V8': np.array([10, 10])
     }
 
-    anchors  = ['V6', 'V4'] 
+    anchors  = ['V6', 'V2', 'V8', 'V0'] 
     unknowns = [k for k in GT if k not in anchors]
 
     edges = [
@@ -138,8 +138,8 @@ def build_scenario():
         ('V0','V3'), ('V3','V6'), ('V1','V4'), ('V4','V7'), ('V2','V5'), ('V5','V8')
     ]
 
-    anchor_noise = 0.1
-    ro_noise     = 0.5
+    anchor_noise = 0.01
+    ro_noise     = 0.1
 
     measurements = {}
     for n1, n2 in edges:
@@ -153,7 +153,7 @@ def build_scenario():
         if name in anchors:
             initial_guesses[name] = GT[name].copy().astype(float)
         else:
-            initial_guesses[name] = GT[name].copy().astype(float) + np.random.randn(2) * 2.0
+            initial_guesses[name] = GT[name].copy().astype(float) + np.random.randn(2) * 1.0
 
     return GT, anchors, unknowns, edges, measurements, initial_guesses, anchor_noise, ro_noise
 
@@ -187,7 +187,7 @@ def build_graph(algo_type, GT, anchors, unknowns, edges_list,
     # ── 변수 노드 생성 ────────────────────────────────────────────────────────
     for name in GT:
         if algo_type == 'GaBP':
-            vn = VNodeGaBP(name, dims=[2], prior_std=5.0)
+            vn = VNodeGaBP(name, dims=[2], prior_std=100.0)
             vn.mu = initial_guesses[name].copy()
 
         elif algo_type in ('GN', 'LM'):
@@ -196,12 +196,12 @@ def build_graph(algo_type, GT, anchors, unknowns, edges_list,
 
         else:  # EKI 계열
             if algo_type == 'EKI':
-                vn = VNodeEKI(name, dims=[2], n_particles=1000, noise_std=1.0)
+                vn = VNodeEKI(name, dims=[2], n_particles=100, noise_std=1.0)
             elif algo_type == 'DEKI_cov':
-                vn = VNodeDEKI(name, dims=[2], n_particles=1000, noise_std=1.0,
+                vn = VNodeDEKI(name, dims=[2], n_particles=100, noise_std=1.0,
                                rho_init=1.0, rho_update_method='covariance')
             elif algo_type == 'DEKI_res':
-                vn = VNodeDEKI(name, dims=[2], n_particles=1000, noise_std=1.0,
+                vn = VNodeDEKI(name, dims=[2], n_particles=100, noise_std=1.0,
                                rho_init=1.0, rho_update_method='residual')
             mean_guess = initial_guesses[name].reshape(2, 1)
             vn.ensemble = mean_guess + np.random.randn(2, vn.n_particles) * 3.0
@@ -250,7 +250,7 @@ def run_test():
 
     # 비교할 알고리즘
     algos = ['EKI', 
-            #  'GaBP', 
+             'GaBP', 
              'DEKI_cov', 
              'DEKI_res',
             #  'GN', 
@@ -281,7 +281,7 @@ def run_test():
         rmse[algo].append(get_rmse(vnodes_d[algo], algo))
 
     n_iter     = 100
-    decay_rate = 0.5
+    decay_rate = 0.9
 
     print("=" * 70)
     print(f"{'Iter':>4} | {'EKI':>6} | {'GaBP':>6} | {'DEKI_c':>6} | "
@@ -355,7 +355,7 @@ def run_test():
     plot_network(axes[0, 1], f"Vanilla EKI  (final={rmse['EKI'][-1]:.3f}m)", history['EKI'])
 
     # [0,2] GaBP
-    # plot_network(axes[0, 2], f"GaBP  (final={rmse['GaBP'][-1]:.3f}m)", history['GaBP'])
+    plot_network(axes[0, 2], f"GaBP  (final={rmse['GaBP'][-1]:.3f}m)", history['GaBP'])
 
     # [1,0] DEKI cov
     plot_network(axes[1, 0], f"DEKI-Cov  (final={rmse['DEKI_cov'][-1]:.3f}m)", history['DEKI_cov'])
@@ -374,7 +374,7 @@ def run_test():
     ax_r.set_title("RMSE Convergence", fontsize=12, fontweight='bold')
     styles = {
         'EKI':      ('blue',   ':',  'o', 2),
-        # 'GaBP':     ('red',    '--', 's', 2),
+        'GaBP':     ('red',    '--', 's', 2),
         'DEKI_cov': ('green',  '-',  'o', 3),
         'DEKI_res': ('purple', '-',  '^', 2),
         # 'GN':       ('darkorange', '-.', 'D', 2),
@@ -420,7 +420,7 @@ def run_ensemble_visualization():
     )
 
     # 관찰할 초기 스텝들 (초반에 빠르게 수렴하므로 초반에 집중)
-    target_iters = [0, 1, 2, 5, 10, 20]
+    target_iters = [0, 1, 5, 10, 20, 100]
     snapshots = {}
     decay_rate = 0.1
 
@@ -533,13 +533,13 @@ def run_gabp_visualization():
         measurements, initial_guesses, anchor_noise, ro_noise
     )
 
-    target_iters = [0, 1, 2, 5, 10, 20]
+    target_iters = [0, 1, 5, 10, 20, 100]
     snapshots = {}
 
     snapshots[0] = {}
     for n in unknowns:
         # 초기 공분산 (임의의 넓은 원형 불확실성)
-        snapshots[0][n] = {'mu': vnodes[n].mu.flatten(), 'cov': np.eye(2) * 25.0}
+        snapshots[0][n] = {'mu': vnodes[n].mu.flatten(), 'cov': np.eye(2) * 5.0}
 
     print("Running GaBP Covariance Simulation...")
     
@@ -630,6 +630,6 @@ def run_gabp_visualization():
 
 
 if __name__ == "__main__":
-    # run_test()
-    run_ensemble_visualization()
+    run_test()
+    # run_ensemble_visualization()
     # run_gabp_visualization()

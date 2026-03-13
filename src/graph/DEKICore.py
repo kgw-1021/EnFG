@@ -34,7 +34,7 @@ class VNode(Node):
         noise_std: float = 1e-4,
         # --- ADMM Parameters ---
         rho_init: float = 1.0,
-        rho_update_method: str = 'covariance',  # 'covariance', 'residual', 'fixed'
+        rho_update_method: str = 'residual',  # 'covariance', 'residual', 'fixed'
         rho_max: float = 100.0,
         alpha_cov: float = 1.0,     # For 'covariance' method
         mu_res: float = 5.0,       # For 'residual' method
