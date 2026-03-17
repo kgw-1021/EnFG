@@ -10,15 +10,26 @@ from src.graph.factors import (
     )
 
 class Agent:
-    def __init__(self, agent_id: int, start_pos: np.ndarray, goal_pos: np.ndarray, horizon: int = 10, dt: float = 0.1, env_map=None):
+    def __init__(self, agent_id: int, start_pos: np.ndarray, goal_pos: np.ndarray, n_particles: int = 100, horizon: int = 10, dt: float = 0.1, env_map=None,
+                 safe_dist: float = 0.5, collision_weight: float = 1e-4, dyn_weight: float = 1e-4, smooth_weight: float = 1e-1, vel_weight: float = 1e-3, obs_weight: float = 1e-4, start_goal_weight: float = 1e-3):
+    
         self.id = agent_id
         self.horizon = horizon
         self.dt = dt
         self.goal_pos = goal_pos
         self.start_pos = start_pos
         self.env_map = env_map
+        self.n_particles = n_particles
         # D-EKI를 위한 Factor Graph 초기화
         self.graph = FactorGraph(max_workers=2) 
+        self.safe_dist = safe_dist
+
+        self.dyn_weight = dyn_weight
+        self.smooth_weight = smooth_weight
+        self.vel_weight = vel_weight
+        self.obs_weight = obs_weight
+        self.collision_weight = collision_weight
+        self.start_goal_weight = start_goal_weight
         
         self.vnodes = []
         self.collision_factors = {} 
@@ -31,7 +42,8 @@ class Agent:
             vnode = VNode(
                 name=f"A{self.id}_t{t}", 
                 dims=[4], 
-                n_particles=100, 
+                n_particles=n_particles,
+                init_std=5.0,
                 noise_std=1e-2,
                 rho_init=1.0, 
                 rho_update_method='residual'
@@ -43,10 +55,10 @@ class Agent:
             init_py = start_pos[1] * (1 - alpha) + goal_pos[1] * alpha
             init_theta = start_pos[2] if len(start_pos) > 2 else np.arctan2(goal_pos[1]-start_pos[1], goal_pos[0]-start_pos[0])
             
-            vnode.ensemble[0, :] = init_px + np.random.randn(100) * 0.5    # px
-            vnode.ensemble[1, :] = init_py + np.random.randn(100) * 0.5    # py
-            vnode.ensemble[2, :] = init_theta + np.random.randn(100) * 0.1 # theta
-            vnode.ensemble[3, :] = 0.5 + np.random.randn(100) * 0.1        # v (초기 속도 약간 부여)
+            vnode.ensemble[0, :] = init_px + np.random.randn(n_particles) * 0.5    # px
+            vnode.ensemble[1, :] = init_py + np.random.randn(n_particles) * 0.5    # py
+            vnode.ensemble[2, :] = init_theta + np.random.randn(n_particles) * 0.1 # theta
+            vnode.ensemble[3, :] = 0.5 + np.random.randn(n_particles) * 0.1        # v (초기 속도 약간 부여)
             
             self.graph.nodes.append(vnode)
             self.vnodes.append(vnode)
@@ -58,20 +70,20 @@ class Agent:
         # 2-1. Dynamics & Smoothness Factors (시간 t 와 t+1 을 연결)
         for t in range(horizon - 1):
             # 운동학 모델 팩터
-            dyn_factor = DynamicsFactor(f"Dyn_A{self.id}_t{t}", dt=self.dt, weight=1e-3)
+            dyn_factor = DynamicsFactor(f"Dyn_A{self.id}_t{t}", dt=self.dt, weight=1e-4)
             self.graph.nodes.append(dyn_factor)
             self.graph.connect(dyn_factor, self.vnodes[t])
             self.graph.connect(dyn_factor, self.vnodes[t+1])
             
             # 제어 평활화(가속도/각속도 제한) 팩터
-            smooth_factor = ControlSmoothnessFNode(f"Smooth_A{self.id}_t{t}", dt=self.dt, w_smooth=1e-1, w_limit=1e-1)
+            smooth_factor = ControlSmoothnessFNode(f"Smooth_A{self.id}_t{t}", dt=self.dt, w_smooth=smooth_weight, w_limit=smooth_weight)
             self.graph.nodes.append(smooth_factor)
             self.graph.connect(smooth_factor, self.vnodes[t])
             self.graph.connect(smooth_factor, self.vnodes[t+1])
 
         # 2-2. 속도 제한 팩터 (모든 시간 스텝의 단일 노드에 적용)
         for t in range(horizon):
-            vel_factor = VelocityConstraintFNode(f"Vel_A{self.id}_t{t}", v_max=2.0, v_min=-0.5, weight=1.0)
+            vel_factor = VelocityConstraintFNode(f"Vel_A{self.id}_t{t}", v_max=0.1, v_min=-0.05, weight=vel_weight)
             self.graph.nodes.append(vel_factor)
             self.graph.connect(vel_factor, self.vnodes[t])
 
@@ -81,19 +93,17 @@ class Agent:
                 bb_factor = GridObsFactor(
                     name=f"BB_Obstacle_A{self.id}_t{t}", 
                     occupancy_map_func=env_map.get_penalty, 
-                    margin=0.5,       
-                    num_samples=8, 
-                    weight=1e-4
+                    weight=obs_weight
                 )
                 self.graph.nodes.append(bb_factor)
                 self.graph.connect(bb_factor, self.vnodes[t])
 
-        start_factor = StartFactor(f"Start_A{self.id}", start_pos=self.start_pos, weight=1e-5)
+        start_factor = StartFactor(f"Start_A{self.id}", start_pos=self.start_pos, weight=start_goal_weight)
         self.graph.nodes.append(start_factor)
         self.graph.connect(start_factor, self.vnodes[0])
 
         # 2-3. 목표 지점 팩터 (마지막 시간 스텝 노드에만 적용)
-        goal_factor = GoalFactor(f"Goal_A{self.id}", goal_pos=self.goal_pos, weight=1e-4)
+        goal_factor = GoalFactor(f"Goal_A{self.id}", goal_pos=self.goal_pos, weight=start_goal_weight)
         self.graph.nodes.append(goal_factor)
         self.graph.connect(goal_factor, self.vnodes[-1])
 
@@ -104,7 +114,7 @@ class Agent:
         """ 타 에이전트와의 충돌 회피 팩터 생성 (각 Time step별로 부착) """
         factors = []
         for t in range(self.horizon):
-            factor = CollisionFactor(f"Col_A{self.id}_A{other_id}_t{t}", safe_dist=0.4, weight=1e-4)
+            factor = CollisionFactor(f"Col_A{self.id}_A{other_id}_t{t}", safe_dist=self.safe_dist, weight=self.collision_weight)
             self.graph.nodes.append(factor)
             self.graph.connect(factor, self.vnodes[t])
             factors.append(factor)

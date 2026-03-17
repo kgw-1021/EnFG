@@ -106,7 +106,7 @@ class CollisionFactor(UnaryFNode):
 
 class VelocityConstraintFNode(UnaryFNode):
     """ 속도 한계 제약 """
-    def __init__(self, name: str, v_max: float = 1.0, v_min: float = -0.5, weight: float = 1e-3):
+    def __init__(self, name: str, v_max: float = 0.1, v_min: float = -0.05, weight: float = 1e-4):
         gamma = np.eye(1) * weight
         super().__init__(name, dims=[1], gamma=gamma)
         self.v_max = v_max
@@ -174,39 +174,20 @@ class ControlSmoothnessFNode(BinaryFNode):
     
 
 class GridObsFactor(UnaryFNode):
-    def __init__(self, name: str, occupancy_map_func, margin: float = 0.4, num_samples: int = 8, weight: float = 1e-3):
+    """
+    SDF 기반 장애물 페널티 팩터.
+ 
+    SDF 맵은 이미 inflation_radius 범위 안에서 연속적인 그래디언트를 제공하므로,
+    기존의 8방향 오프셋 샘플링이 불필요합니다.
+    파티클의 현재 위치를 그대로 맵 함수에 넣어 페널티를 얻습니다.
+    """
+    def __init__(self, name: str, occupancy_map_func, weight: float = 1e-3):
         gamma = np.eye(1) * weight
         super().__init__(name, dims=[1], gamma=gamma)
         self.occupancy_map_func = occupancy_map_func
-        self.margin = margin
-        
-        # 1. 오프셋 좌표를 리스트가 아닌 NumPy 배열(K, 1) 형태로 미리 만들어 둡니다.
-        offsets_list = [(0.0, 0.0)]
-        if margin > 0.0:
-            angles = np.linspace(0, 2 * np.pi, num_samples, endpoint=False)
-            for a in angles:
-                offsets_list.append((margin * np.cos(a), margin * np.sin(a)))
-                
-        offsets_arr = np.array(offsets_list) # shape: (K, 2)
-        # 나중에 (N,) 형태의 파티클 위치와 브로드캐스팅하기 위해 (K, 1)로 변환
-        self.offsets_x = offsets_arr[:, 0].reshape(-1, 1) 
-        self.offsets_y = offsets_arr[:, 1].reshape(-1, 1) 
-
+ 
     def _error_function(self, x: np.ndarray) -> np.ndarray:
         # x shape: (state_dim, N)
-        pos_x = x[0, :] # shape: (N,)
-        pos_y = x[1, :] # shape: (N,)
-        
-        # 2. 브로드캐스팅: (K, 1) + (N,) = (K, N)
-        # N개의 파티클 각각에 대해 K개의 검사 좌표가 한 번에 생성됩니다.
-        check_x = pos_x + self.offsets_x 
-        check_y = pos_y + self.offsets_y 
-        
-        # 3. 맵 함수 평가: 한 번의 호출로 (K, N) 형태의 페널티 배열을 통째로 받아옴
-        penalties = self.occupancy_map_func(check_x, check_y)
-        
-        # 4. 각 파티클(열 방향, axis=0)마다 K개의 샘플 중 가장 큰 페널티를 추출 -> shape: (N,)
-        max_penalty = np.max(penalties, axis=0)
-        
-        # EKI 규격에 맞게 (1, N) 형태로 반환
-        return max_penalty.reshape(1, -1)
+        # SDF 맵이 연속 그래디언트를 제공하므로 현재 위치만 조회
+        penalties = self.occupancy_map_func(x[0:1, :], x[1:2, :])  # (1, N)
+        return penalties.reshape(1, -1)

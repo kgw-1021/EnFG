@@ -8,7 +8,7 @@ from src.graph.agent import Agent
 from src.communication.shared_mem import CommunicationSharedMemory
 from src.map.map_generator import EnvironmentMap, CircleObstacle, RectangleObstacle
 
-def generate_circular_scenario(num_agents: int, center_x: float = 5.0, center_y: float = 5.0, radius: float = 5.0, initial_v: float = 0.5):
+def generate_narrow_corridor_scenario(num_agents: int, agent_width: float = 1.0, gap: float = 5.0, initial_v: float = 0.5):
     """
     원의 중심과 반지름을 기준으로 에이전트들을 원의 둘레에 균등하게 배치하고,
     정반대 편을 목표 지점으로 설정합니다.
@@ -16,22 +16,28 @@ def generate_circular_scenario(num_agents: int, center_x: float = 5.0, center_y:
     start_poses = []
     goal_poses = []
     
-    for i in range(num_agents):
-        # 1. 각도 계산 (360도를 에이전트 수만큼 균등 분할)
-        angle = i * (2 * np.pi / num_agents)
+    # 1. 왼쪽 그룹 (4명) -> 오른쪽으로 이동
+    for i in range(num_agents // 2):
+        # y 좌표는 중앙을 기준으로 위아래로 배치
+        start_x = -gap
+        start_y = (i - 1.5) * agent_width 
         
-        # 2. 시작 위치 (원 둘레 위)
-        start_x = center_x + radius * np.cos(angle)
-        start_y = center_y + radius * np.sin(angle)
+        goal_x = gap
+        goal_y = (i - 1.5) * agent_width
         
-        # 3. 목표 위치 (시작점의 정확히 반대편: 각도에 파이(180도)를 더함)
-        goal_x = center_x + radius * np.cos(angle + np.pi)
-        goal_y = center_y + radius * np.sin(angle + np.pi)
+        theta = 0.0  # 오른쪽(0도)을 바라봄
         
-        # 4. 초기 바라보는 방향 (목표 지점을 향하도록 각도 계산)
-        theta = np.arctan2(goal_y - start_y, goal_x - start_x)
+        start_poses.append(np.array([start_x, start_y, theta, initial_v]))
+        goal_poses.append(np.array([goal_x, goal_y]))
+
+        start_x = gap
+        start_y = (i - 1.5) * agent_width
         
-        # 리스트에 추가 [x, y, theta, v]
+        goal_x = -gap
+        goal_y = (i - 1.5) * agent_width
+        
+        theta = np.pi  # 왼쪽(180도)을 바라봄
+        
         start_poses.append(np.array([start_x, start_y, theta, initial_v]))
         goal_poses.append(np.array([goal_x, goal_y]))
         
@@ -46,7 +52,7 @@ def run_agent_process(agent_id: int, start_pos: np.ndarray, goal_pos: np.ndarray
     print(f"[Agent {agent_id}] Process Started.")
     
     # 1. 프로세스 내부에서 자기 자신의 에이전트 객체 생성 (메모리 완전 독립)
-    agent = Agent(agent_id=agent_id, start_pos=start_pos, goal_pos=goal_pos, horizon=horizon, dt=dt, env_map=env_map)
+    agent = Agent(agent_id=agent_id, start_pos=start_pos, goal_pos=goal_pos, n_particles=1000, horizon=horizon, dt=dt, env_map=env_map, safe_dist=1.0, dyn_weight=1e-4)
     
     # 타 에이전트와의 충돌 팩터 부착
     for other_id in range(num_agents):
@@ -71,7 +77,7 @@ def run_agent_process(agent_id: int, start_pos: np.ndarray, goal_pos: np.ndarray
         
         # [Step B] 외부 정보(타 로봇 궤적) 업데이트 및 내 그래프 최적화 (1 스텝)
         agent.update_external_beliefs(shared_trajectories)
-        agent.step(iterations=5)
+        agent.step(iterations=10)
         
         # [Step C] 계산된 나의 새로운 궤적을 공유 메모리에 브로드캐스트
         shm.write(agent_id, agent.extract_trajectory())
@@ -117,17 +123,22 @@ def main():
     HORIZON = 50
     DT = 0.05
     MAX_ITER = 50
-    NUM_AGENTS = 10
+    NUM_AGENTS = 8
     
-    start_poses, goal_poses = generate_circular_scenario(
+    start_poses, goal_poses = generate_narrow_corridor_scenario(
         num_agents=NUM_AGENTS, 
-        center_x=5.0, 
-        center_y=5.0, 
-        radius=5.0, 
+        agent_width=1.5, 
+        gap=10.0, 
         initial_v=0.0
     )
 
-    env = None
+    env = EnvironmentMap(penalty_value=1000.0, inflation_radius=0.5)
+    obs1 = RectangleObstacle(x_min=-1.0, x_max=1.0, y_min=-10.0, y_max=-1.5)
+    obs2 = RectangleObstacle(x_min=-1.0, x_max=1.0, y_min=1.5, y_max=10.0)
+
+    env.add_obstacle(obs1)
+    env.add_obstacle(obs2)
+
     # env.visualize(x_range=(-2, 12), y_range=(-2, 12), resolution=0.05)
 
     # ==========================================================
@@ -168,15 +179,18 @@ def main():
     # --- 애니메이션 설정 ---
     fig, ax = plt.subplots(figsize=(10, 10))
     ax.set_title(f"Multi-Robot Trajectory Animation ({NUM_AGENTS} Agents)", fontsize=16, fontweight='bold')
-    ax.set_xlim(-2, 12)
-    ax.set_ylim(-2, 12)
+    plt.xlim(-15, 15)
+    plt.ylim(-10, 10)
     ax.set_aspect('equal') # 원형 교차가 찌그러지지 않도록 비율 고정
     ax.grid(True, linestyle='--', alpha=0.6)
     ax.set_xlabel("X Position (m)")
     ax.set_ylabel("Y Position (m)")
 
     colors = plt.cm.rainbow(np.linspace(0, 1, NUM_AGENTS))
-    
+
+    # 0. 배경(정적 요소) 그리기: 장애물
+    env.draw_obstacles(ax, color='dimgray', alpha=0.7)
+
     # 1. 배경(정적 요소) 그리기: 시작점과 도착점
     for i in range(NUM_AGENTS):
         c = colors[i]
@@ -212,8 +226,26 @@ def main():
         return lines + robots
 
     # 3. 애니메이션 객체 생성 (interval=200 은 프레임당 0.2초 대기를 의미)
-    ani = animation.FuncAnimation(fig, animate, frames=HORIZON, 
-                                init_func=init, blit=True, interval=200, repeat=True)
+    ani = animation.FuncAnimation(fig, animate, frames=HORIZON,
+                                  init_func=init, blit=True, interval=200, repeat=True)
+
+    # 4. 애니메이션 저장 (저장하지 않으려면 SAVE_ANIMATION = False 로 설정)
+    SAVE_ANIMATION = True
+    ANIMATION_PATH = "resource/path_planning_narrow_corridor.gif"  # .gif 또는 .mp4
+
+    if SAVE_ANIMATION:
+        # mp4로 저장하려면 ffmpeg 설치 필요: pip install ffmpeg-python 또는 conda install ffmpeg
+        # gif로 저장하려면 pillow 설치 필요: pip install pillow
+        ext = ANIMATION_PATH.split(".")[-1].lower()
+        if ext == "mp4":
+            writer = animation.FFMpegWriter(fps=5, bitrate=1800,
+                                            metadata={"title": "Multi-Robot Trajectory"})
+        else:  # gif
+            writer = animation.PillowWriter(fps=5)
+
+        print(f"Saving animation to '{ANIMATION_PATH}'...")
+        ani.save(ANIMATION_PATH, writer=writer, dpi=100)
+        print(f"Animation saved.")
 
     plt.tight_layout()
     plt.show()
@@ -229,11 +261,12 @@ def main():
         # 각 에이전트 고유의 색상 할당
         c = colors[i]
         
+        env.draw_obstacles(plt.gca(), color='gray', alpha=0.5)
         plt.scatter(px[0], py[0], color=c, marker='s', s=100, edgecolors='black')
         # plt.scatter(goal_poses[i][0], goal_poses[i][1], color=c, marker='*', s=250, edgecolors='black', label=f"A{i} Goal")
         plt.plot(px, py, color=c, marker='o', markersize=4, linestyle='-', alpha=0.7, label=f"A{i} Path")
-    plt.xlim(-2, 12)
-    plt.ylim(-2, 12)
+    plt.xlim(-15, 15)
+    plt.ylim(-10, 10)
     plt.grid(True, linestyle='--', alpha=0.6)
 
     plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=9)

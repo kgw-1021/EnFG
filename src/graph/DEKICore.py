@@ -32,6 +32,7 @@ class VNode(Node):
         dims: list,
         n_particles: int = 100,
         noise_std: float = 1e-4,
+        init_std: float = 1.0,
         # --- ADMM Parameters ---
         rho_init: float = 1.0,
         rho_update_method: str = 'residual',  # 'covariance', 'residual', 'fixed'
@@ -47,7 +48,7 @@ class VNode(Node):
         d = int(np.prod(dims)) if dims else 1
         
         # Initialize ensemble (prior)
-        self.ensemble = np.random.randn(d, self.n_particles)
+        self.ensemble = np.random.randn(d, self.n_particles) * init_std
         
         # --- ADMM State Variables ---
         self.rho = rho_init
