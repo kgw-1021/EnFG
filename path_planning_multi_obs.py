@@ -64,6 +64,8 @@ def run_agent_process(agent_id: int, start_pos: np.ndarray, goal_pos: np.ndarray
 
     # 4. Main Optimization Loop (ADMM/EKI)
     for iteration in range(max_iter):
+
+        # agent.initialize_Vnodes(std=0.3/iteration if iteration > 0 else 0.3)  # 점진적으로 노이즈 감소
         
         # [Step A] 공유 메모리에서 다른 로봇들의 현재 스텝 궤적 읽어오기
         # 데이터가 변경되는 것을 막기 위해 .copy() 로 로컬 메모리에 가져옵니다.
@@ -71,7 +73,7 @@ def run_agent_process(agent_id: int, start_pos: np.ndarray, goal_pos: np.ndarray
         
         # [Step B] 외부 정보(타 로봇 궤적) 업데이트 및 내 그래프 최적화 (1 스텝)
         agent.update_external_beliefs(shared_trajectories)
-        agent.step(iterations=5)
+        agent.step(iterations=3)
         
         # [Step C] 계산된 나의 새로운 궤적을 공유 메모리에 브로드캐스트
         shm.write(agent_id, agent.extract_trajectory())
@@ -88,7 +90,7 @@ def run_agent_process(agent_id: int, start_pos: np.ndarray, goal_pos: np.ndarray
     # 프로세스 종료 전 로컬 공유 메모리 참조 해제
     shm.shm.close()
 
-def check_collision(trajectories: dict, robot_radius: float = 0.3) -> bool:
+def check_collision(trajectories: dict, robot_radius: float = 0.4) -> bool:
     """
     모든 에이전트의 궤적을 검사하여 충돌이 발생하는지 여부를 반환.
     충돌 기준: 두 에이전트 간의 유클리드 거리가 robot_radius 이하인 경우.
@@ -115,7 +117,7 @@ def check_collision(trajectories: dict, robot_radius: float = 0.3) -> bool:
 def main():
     # 시뮬레이션 파라미터 세팅
     HORIZON = 50
-    DT = 0.05
+    DT = 0.1
     MAX_ITER = 50
     NUM_AGENTS = 8
     

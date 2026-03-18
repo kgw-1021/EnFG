@@ -633,7 +633,349 @@ def run_gabp_visualization():
     plt.tight_layout()
     plt.show()
 
+def run_anchor_sensitivity(num_anchors: int, n_trials: int = 100, n_iter: int = 30,
+                           algo: str = 'DEKI_res', decay_rate: float = 0.5):
+    """
+    지정한 수(num_anchors)의 앵커를 9개 노드 중 랜덤으로 선택하여
+    n_trials 번 독립 실험을 수행하고, 각 실험의 최종 RMSE를 집계합니다.
+
+    Args:
+        num_anchors : 매 실험마다 랜덤 선택할 앵커 수 (1~8)
+        n_trials    : 반복 실험 횟수 (기본 100)
+        n_iter      : 실험당 최적화 반복 횟수 (기본 30)
+        algo        : 사용할 알고리즘 (기본 'DEKI_res')
+        decay_rate  : EKI 계열 noise_std 감쇠율 (기본 0.5)
+
+    Returns:
+        trial_rmses : 각 실험의 최종 RMSE 리스트 (길이 n_trials)
+        mean_rmse   : 전체 평균 RMSE
+        std_rmse    : 전체 표준편차
+    """
+    all_nodes = ['V0', 'V1', 'V2', 'V3', 'V4', 'V5', 'V6', 'V7', 'V8']
+
+    if not (1 <= num_anchors <= len(all_nodes) - 1):
+        raise ValueError(f"num_anchors는 1 이상 {len(all_nodes)-1} 이하여야 합니다.")
+
+    def get_estimate(vn):
+        if algo in ('GaBP', 'GN', 'LM', 'GLM'):
+            return vn.mu
+        return vn.ensemble.mean(axis=1)
+
+    def get_rmse(vn_dict, unknowns_list, GT):
+        errs = [np.linalg.norm(get_estimate(vn_dict[n]) - GT[n]) for n in unknowns_list]
+        return float(np.mean(errs))
+
+    trial_rmses = []
+
+    print(f"\n{'='*60}")
+    print(f"  Anchor Sensitivity Test")
+    print(f"  Algorithm : {algo}")
+    print(f"  Anchors   : {num_anchors} / {len(all_nodes)} nodes (random per trial)")
+    print(f"  Trials    : {n_trials}  |  Iterations per trial : {n_iter}")
+    print(f"{'='*60}")
+
+    for trial in range(n_trials):
+        # 매 실험마다 독립적인 랜덤 시드 (trial 번호 기반 → 재현 가능)
+        np.random.seed(trial)
+
+        # 앵커 랜덤 선택
+        chosen_anchors = list(np.random.choice(all_nodes, size=num_anchors, replace=False))
+        unknowns_trial = [v for v in all_nodes if v not in chosen_anchors]
+
+        # GT / 엣지 / 측정값 생성 (매 실험마다 측정 노이즈 새로 샘플링)
+        GT = {
+            'V0': np.array([0.0,  0.0]),  'V1': np.array([5.0,  0.0]),  'V2': np.array([10.0,  0.0]),
+            'V3': np.array([0.0,  5.0]),  'V4': np.array([5.0,  5.0]),  'V5': np.array([10.0,  5.0]),
+            'V6': np.array([0.0, 10.0]),  'V7': np.array([5.0, 10.0]),  'V8': np.array([10.0, 10.0])
+        }
+        edges = [
+            ('V0','V1'), ('V1','V2'), ('V3','V4'), ('V4','V5'), ('V6','V7'), ('V7','V8'),
+            ('V0','V3'), ('V3','V6'), ('V1','V4'), ('V4','V7'), ('V2','V5'), ('V5','V8')
+        ]
+        anchor_noise = 0.01
+        ro_noise     = 0.5
+
+        measurements = {}
+        for n1, n2 in edges:
+            dx = GT[n2][0] - GT[n1][0]
+            dy = GT[n2][1] - GT[n1][1]
+            dist = np.sqrt(dx**2 + dy**2) + np.random.randn() * ro_noise
+            measurements[(n1, n2)] = dist
+
+        initial_guesses = {}
+        for name in GT:
+            if name in chosen_anchors:
+                initial_guesses[name] = GT[name].copy()
+            else:
+                initial_guesses[name] = GT[name].copy() + np.random.randn(2) * 1.0
+
+        # 그래프 빌드 및 최적화
+        graph, vnodes = build_graph(
+            algo, GT, chosen_anchors, unknowns_trial,
+            edges, measurements, initial_guesses, anchor_noise, ro_noise
+        )
+
+        for _ in range(n_iter):
+            graph.iterate(1)
+            if algo not in ('GaBP', 'GN', 'LM', 'GLM'):
+                for vn in vnodes.values():
+                    vn.noise_std *= decay_rate
+
+        # 최종 RMSE 기록
+        final_rmse = get_rmse(vnodes, unknowns_trial, GT)
+        trial_rmses.append(final_rmse)
+
+        if (trial + 1) % 10 == 0:
+            running_mean = float(np.mean(trial_rmses))
+            print(f"  Trial {trial+1:3d}/{n_trials}  |  "
+                  f"This RMSE: {final_rmse:.4f} m  |  "
+                  f"Running mean: {running_mean:.4f} m  |  "
+                  f"Anchors: {chosen_anchors}")
+
+    mean_rmse = float(np.mean(trial_rmses))
+    std_rmse  = float(np.std(trial_rmses))
+
+    print(f"\n{'='*60}")
+    print(f"  Results over {n_trials} trials")
+    print(f"  Mean RMSE : {mean_rmse:.4f} m")
+    print(f"  Std  RMSE : {std_rmse:.4f} m")
+    print(f"  Min  RMSE : {min(trial_rmses):.4f} m")
+    print(f"  Max  RMSE : {max(trial_rmses):.4f} m")
+    print(f"{'='*60}\n")
+
+    # --- 시각화 ---
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    fig.suptitle(
+        f"Anchor Sensitivity  |  algo={algo},  anchors={num_anchors}/{len(all_nodes)},  "
+        f"trials={n_trials},  iter={n_iter}",
+        fontsize=13, fontweight='bold'
+    )
+
+    # [왼쪽] 실험별 RMSE 히스토그램
+    ax_hist = axes[0]
+    ax_hist.hist(trial_rmses, bins=20, color='steelblue', edgecolor='black', alpha=0.8)
+    ax_hist.axvline(mean_rmse, color='red', linestyle='--', linewidth=2,
+                    label=f'Mean = {mean_rmse:.4f} m')
+    ax_hist.axvline(mean_rmse + std_rmse, color='orange', linestyle=':', linewidth=1.5,
+                    label=f'±1σ = {std_rmse:.4f} m')
+    ax_hist.axvline(mean_rmse - std_rmse, color='orange', linestyle=':', linewidth=1.5)
+    ax_hist.set_xlabel("Final RMSE (m)", fontsize=12)
+    ax_hist.set_ylabel("Count", fontsize=12)
+    ax_hist.set_title("RMSE Distribution across Trials", fontsize=13, fontweight='bold')
+    ax_hist.legend(fontsize=11)
+    ax_hist.grid(True, linestyle='--', alpha=0.5)
+
+    # [오른쪽] 실험 순서별 RMSE + 누적 평균
+    ax_line = axes[1]
+    cumulative_mean = np.cumsum(trial_rmses) / np.arange(1, n_trials + 1)
+    ax_line.plot(range(1, n_trials + 1), trial_rmses,
+                 color='steelblue', alpha=0.4, linewidth=1.0, label='Per-trial RMSE')
+    ax_line.plot(range(1, n_trials + 1), cumulative_mean,
+                 color='red', linewidth=2.5, label='Cumulative mean')
+    ax_line.axhline(mean_rmse, color='red', linestyle='--', linewidth=1.5, alpha=0.6)
+    ax_line.set_xlabel("Trial", fontsize=12)
+    ax_line.set_ylabel("Final RMSE (m)", fontsize=12)
+    ax_line.set_title("Per-trial RMSE & Cumulative Mean", fontsize=13, fontweight='bold')
+    ax_line.legend(fontsize=11)
+    ax_line.grid(True, linestyle='--', alpha=0.5)
+
+    plt.tight_layout()
+    plt.show()
+
+    return trial_rmses, mean_rmse, std_rmse
+
+
+def run_algo_comparison(num_anchors: int, n_trials: int = 100, n_iter: int = 30,
+                        decay_rate: float = 0.5):
+    """
+    6개 알고리즘을 동일한 trial 조건(앵커 위치, 측정 노이즈)에서 비교합니다.
+    매 trial마다 시나리오를 1회 생성하고, 6개 알고리즘이 동일한 조건을 공유합니다.
+
+    Args:
+        num_anchors : 랜덤 선택할 앵커 수 (1~8)
+        n_trials    : 반복 실험 횟수 (기본 100)
+        n_iter      : 실험당 최적화 반복 횟수 (기본 30)
+        decay_rate  : EKI 계열 noise_std 감쇠율 (기본 0.5)
+
+    Returns:
+        results : { algo: {'rmses': [...], 'mean': float, 'std': float} }
+    """
+    algos     = ['EKI', 'GaBP', 'DEKI_cov', 'DEKI_res', 'LM', 'GLM']
+    all_nodes = ['V0', 'V1', 'V2', 'V3', 'V4', 'V5', 'V6', 'V7', 'V8']
+
+    if not (1 <= num_anchors <= len(all_nodes) - 1):
+        raise ValueError(f"num_anchors는 1 이상 {len(all_nodes)-1} 이하여야 합니다.")
+
+    def get_estimate(vn, algo):
+        if algo in ('GaBP', 'GN', 'LM', 'GLM'):
+            return vn.mu
+        return vn.ensemble.mean(axis=1)
+
+    def get_rmse(vn_dict, unknowns_list, GT, algo):
+        errs = [np.linalg.norm(get_estimate(vn_dict[n], algo) - GT[n])
+                for n in unknowns_list]
+        return float(np.mean(errs))
+
+    trial_rmses = {a: [] for a in algos}
+
+    print(f"\n{'='*70}")
+    print(f"  Algorithm Comparison (same scenario per trial)")
+    print(f"  Algorithms : {algos}")
+    print(f"  Anchors    : {num_anchors} / {len(all_nodes)} nodes (random per trial)")
+    print(f"  Trials     : {n_trials}  |  Iterations per trial : {n_iter}")
+    print(f"{'='*70}")
+    header = " | ".join(f"{a:>8}" for a in algos)
+    print(f"{'Trial':>6} | {header}")
+    print("-" * 70)
+
+    for trial in range(n_trials):
+        # 시드 고정 → 모든 알고리즘이 동일한 앵커/노이즈/초기값 공유
+        np.random.seed(trial)
+
+        chosen_anchors = list(np.random.choice(all_nodes, size=num_anchors, replace=False))
+        unknowns_trial = [v for v in all_nodes if v not in chosen_anchors]
+
+        GT = {
+            'V0': np.array([0.0,  0.0]),  'V1': np.array([5.0,  0.0]),  'V2': np.array([10.0,  0.0]),
+            'V3': np.array([0.0,  5.0]),  'V4': np.array([5.0,  5.0]),  'V5': np.array([10.0,  5.0]),
+            'V6': np.array([0.0, 10.0]),  'V7': np.array([5.0, 10.0]),  'V8': np.array([10.0, 10.0])
+        }
+        edges = [
+            ('V0','V1'), ('V1','V2'), ('V3','V4'), ('V4','V5'), ('V6','V7'), ('V7','V8'),
+            ('V0','V3'), ('V3','V6'), ('V1','V4'), ('V4','V7'), ('V2','V5'), ('V5','V8')
+        ]
+        anchor_noise = 0.01
+        ro_noise     = 0.5
+
+        measurements = {}
+        for n1, n2 in edges:
+            dx = GT[n2][0] - GT[n1][0]
+            dy = GT[n2][1] - GT[n1][1]
+            dist = np.sqrt(dx**2 + dy**2) + np.random.randn() * ro_noise
+            measurements[(n1, n2)] = dist
+
+        initial_guesses = {}
+        for name in GT:
+            if name in chosen_anchors:
+                initial_guesses[name] = GT[name].copy()
+            else:
+                initial_guesses[name] = GT[name].copy() + np.random.randn(2) * 1.0
+
+        # 6개 알고리즘 동일 조건에서 순차 실행
+        trial_row = {}
+        for algo in algos:
+            graph, vnodes = build_graph(
+                algo, GT, chosen_anchors, unknowns_trial,
+                edges, measurements, initial_guesses, anchor_noise, ro_noise
+            )
+            for _ in range(n_iter):
+                graph.iterate(1)
+                if algo not in ('GaBP', 'GN', 'LM', 'GLM'):
+                    for vn in vnodes.values():
+                        vn.noise_std *= decay_rate
+
+            rmse_val = get_rmse(vnodes, unknowns_trial, GT, algo)
+            trial_rmses[algo].append(rmse_val)
+            trial_row[algo] = rmse_val
+
+        if (trial + 1) % 10 == 0:
+            row_str = " | ".join(f"{trial_row[a]:8.4f}" for a in algos)
+            print(f"{trial+1:6d} | {row_str}   anchors={chosen_anchors}")
+
+    # 통계 집계
+    results = {}
+    for algo in algos:
+        rmses = trial_rmses[algo]
+        results[algo] = {
+            'rmses' : rmses,
+            'mean'  : float(np.mean(rmses)),
+            'std'   : float(np.std(rmses)),
+            'min'   : float(np.min(rmses)),
+            'max'   : float(np.max(rmses)),
+        }
+
+    print(f"\n{'='*70}")
+    print(f"  Final Results ({n_trials} trials, {n_iter} iter, {num_anchors} anchors)")
+    print(f"{'='*70}")
+    print(f"  {'Algo':<10} {'Mean RMSE':>10} {'Std':>8} {'Min':>8} {'Max':>8}")
+    print(f"  {'-'*46}")
+    for algo in sorted(algos, key=lambda a: results[a]['mean']):
+        r = results[algo]
+        print(f"  {algo:<10} {r['mean']:10.4f} {r['std']:8.4f} {r['min']:8.4f} {r['max']:8.4f}")
+    print(f"{'='*70}\n")
+
+    # 시각화
+    algo_styles = {
+        'EKI'     : ('mediumblue',  'o'),
+        'GaBP'    : ('red',         's'),
+        'DEKI_cov': ('olivedrab',   '^'),
+        'DEKI_res': ('purple',      'D'),
+        'LM'      : ('darkorange',  'v'),
+        'GLM'     : ('darkcyan',    'P'),
+    }
+
+    fig, axes = plt.subplots(1, 3, figsize=(20, 6))
+    fig.suptitle(
+        f"Algorithm Comparison  |  anchors={num_anchors}/{len(all_nodes)},  "
+        f"trials={n_trials},  iter={n_iter}",
+        fontsize=14, fontweight='bold'
+    )
+
+    # [1] 평균 RMSE 바 차트 (오차막대 포함)
+    ax_bar = axes[0]
+    means  = [results[a]['mean'] for a in algos]
+    stds   = [results[a]['std']  for a in algos]
+    colors = [algo_styles[a][0]  for a in algos]
+    bars   = ax_bar.bar(algos, means, yerr=stds, color=colors,
+                        edgecolor='black', linewidth=1.2, alpha=0.85,
+                        capsize=6, error_kw={'linewidth': 2})
+    for bar, val in zip(bars, means):
+        ax_bar.text(bar.get_x() + bar.get_width() / 2,
+                    bar.get_height() + max(stds) * 0.05,
+                    f'{val:.4f}', ha='center', va='bottom',
+                    fontsize=10, fontweight='bold')
+    ax_bar.set_ylabel("Mean Final RMSE (m)", fontsize=12)
+    ax_bar.set_title("Mean RMSE ± 1σ", fontsize=13, fontweight='bold')
+    ax_bar.set_xticklabels(algos, fontsize=11, fontweight='bold')
+    ax_bar.grid(axis='y', linestyle='--', alpha=0.5)
+
+    # [2] 누적 평균 수렴 곡선
+    ax_conv = axes[1]
+    for algo in algos:
+        col, _ = algo_styles[algo]
+        cumulative = np.cumsum(trial_rmses[algo]) / np.arange(1, n_trials + 1)
+        ax_conv.plot(range(1, n_trials + 1), cumulative,
+                     color=col, linewidth=2.0, label=algo)
+    ax_conv.set_xlabel("Trial", fontsize=12)
+    ax_conv.set_ylabel("Cumulative Mean RMSE (m)", fontsize=12)
+    ax_conv.set_title("Cumulative Mean Convergence", fontsize=13, fontweight='bold')
+    ax_conv.legend(fontsize=10, frameon=True)
+    ax_conv.grid(True, linestyle='--', alpha=0.5)
+
+    # [3] 박스플롯 (분포 비교)
+    ax_box = axes[2]
+    box_data = [trial_rmses[a] for a in algos]
+    bp = ax_box.boxplot(box_data, patch_artist=True,
+                        medianprops={'color': 'black', 'linewidth': 2})
+    for patch, algo in zip(bp['boxes'], algos):
+        patch.set_facecolor(algo_styles[algo][0])
+        patch.set_alpha(0.75)
+    ax_box.set_xticklabels(algos, fontsize=11, fontweight='bold')
+    ax_box.set_ylabel("Final RMSE (m)", fontsize=12)
+    ax_box.set_title("RMSE Distribution (Boxplot)", fontsize=13, fontweight='bold')
+    ax_box.grid(axis='y', linestyle='--', alpha=0.5)
+
+    plt.tight_layout()
+    plt.show()
+
+    return results
+
+
 if __name__ == "__main__":
     # run_test()
-    run_ensemble_visualization()
+    # run_ensemble_visualization()
     # run_gabp_visualization()
+    # run_anchor_sensitivity(num_anchors=3)
+
+    # 앵커 수를 원하는 값으로 지정하세요 (1~8)
+    run_algo_comparison(num_anchors=4)

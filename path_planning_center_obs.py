@@ -115,7 +115,7 @@ def check_collision(trajectories: dict, robot_radius: float = 0.3) -> bool:
 def main():
     # 시뮬레이션 파라미터 세팅
     HORIZON = 50
-    DT = 0.05
+    DT = 0.1
     MAX_ITER = 50
     NUM_AGENTS = 8
     
@@ -128,7 +128,7 @@ def main():
     )
 
     env = EnvironmentMap(penalty_value=1000.0, inflation_radius=0.5)
-    obs1 = CircleObstacle(cx=5.0, cy=5.0, radius=2.0)
+    obs1 = CircleObstacle(cx=5.0, cy=5.0, radius=2.5)
     env.add_obstacle(obs1)
     # env.visualize(x_range=(-2, 12), y_range=(-2, 12), resolution=0.05)
 

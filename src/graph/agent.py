@@ -83,7 +83,7 @@ class Agent:
 
         # 2-2. 속도 제한 팩터 (모든 시간 스텝의 단일 노드에 적용)
         for t in range(horizon):
-            vel_factor = VelocityConstraintFNode(f"Vel_A{self.id}_t{t}", v_max=0.1, v_min=-0.05, weight=vel_weight)
+            vel_factor = VelocityConstraintFNode(f"Vel_A{self.id}_t{t}", v_max=0.01, v_min=-0.005, weight=vel_weight)
             self.graph.nodes.append(vel_factor)
             self.graph.connect(vel_factor, self.vnodes[t])
 
@@ -136,6 +136,25 @@ class Agent:
     def extract_trajectory(self) -> np.ndarray:
         """ 현재 에이전트의 전체 궤적(평균값) 반환 -> Shape: (horizon, 4) """
         return np.array([v.mean.flatten() for v in self.vnodes])
+    
+    def initialize_Vnodes(self, std: float = 1.0):
+        """
+        외부 ADMM 루프마다 각 VNode의 앙상블을 현재 mean 주변으로 재초기화합니다.
+        내부 EKI 반복으로 수축한 공분산을 강제로 확장해,
+        새로운 외부 정보(타 에이전트 궤적)에 반응할 여지를 만듭니다.
+
+        앙상블 = mean + N(0, std²)
+        위치(px, py)와 속도(v)에만 노이즈를 주고,
+        각도(theta)는 작은 std로 따로 처리해 운동학적 일관성을 유지합니다.
+        """
+        for vnode in self.vnodes:
+            mean = vnode.mean.flatten()          # (4,)
+            N    = vnode.ensemble.shape[1]       # 파티클 수
+
+            vnode.ensemble[0, :] = mean[0] + np.random.randn(N) * std        # px
+            vnode.ensemble[1, :] = mean[1] + np.random.randn(N) * std        # py
+            vnode.ensemble[2, :] = mean[2] + np.random.randn(N) * std * 0.1  # theta (작게)
+            vnode.ensemble[3, :] = mean[3] + np.random.randn(N) * std * 0.5  # v
 
     def step(self, iterations: int = 1):
         """ EKI-ADMM Message Passing 1스텝(또는 n스텝) 수행 """
