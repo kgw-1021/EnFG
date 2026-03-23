@@ -43,7 +43,7 @@ class Agent:
                 name=f"A{self.id}_t{t}", 
                 dims=[4], 
                 n_particles=n_particles,
-                init_std=5.0,
+                init_std=10.0,
                 noise_std=1e-2,
                 rho_init=1.0, 
                 rho_update_method='residual'
@@ -137,6 +137,16 @@ class Agent:
         """ 현재 에이전트의 전체 궤적(평균값) 반환 -> Shape: (horizon, 4) """
         return np.array([v.mean.flatten() for v in self.vnodes])
     
+    def get_ensemble_data(self) -> np.ndarray:
+        """
+        현재 에이전트의 전체 Time Horizon에 대한 앙상블(파티클) 데이터를 추출하여 반환합니다.
+        외부에서 히스토리를 저장하거나 시각화할 때 사용합니다.
+        
+        Returns:
+            np.ndarray: Shape (horizon, 4, n_particles) -> 4는 [x, y, theta, v]
+        """
+        return np.array([v.ensemble.copy() for v in self.vnodes])
+
     def initialize_Vnodes(self, std: float = 1.0):
         """
         외부 ADMM 루프마다 각 VNode의 앙상블을 현재 mean 주변으로 재초기화합니다.
