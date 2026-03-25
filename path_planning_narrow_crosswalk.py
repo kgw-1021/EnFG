@@ -57,7 +57,7 @@ def run_agent_process(agent_id: int, start_pos: np.ndarray, goal_pos: np.ndarray
     shm = CommunicationSharedMemory(num_agents, horizon, state_dim=4, create=False)
     
     # 3. 초기 궤적을 공유 메모리에 기록
-    shm.write(agent_id, agent.extract_trajectory())
+    shm.write(agent_id, agent.get_mean_trajectory())
     
     # [동기화] 모든 프로세스가 초기화를 끝내고 공유 메모리에 첫 기록을 할 때까지 대기
     barrier.wait()
@@ -74,7 +74,7 @@ def run_agent_process(agent_id: int, start_pos: np.ndarray, goal_pos: np.ndarray
         agent.step(iterations=5)
         
         # [Step C] 계산된 나의 새로운 궤적을 공유 메모리에 브로드캐스트
-        shm.write(agent_id, agent.extract_trajectory())
+        shm.write(agent_id, agent.get_mean_trajectory())
         
         # [동기화] 다른 로봇들이 연산을 끝내고 메모리를 업데이트할 때까지 대기
         # 이 장벽(Barrier)이 없으면 빠른 프로세스가 혼자 미래 스텝으로 달려나가 합의가 깨집니다.
@@ -116,22 +116,22 @@ def main():
     # 시뮬레이션 파라미터 세팅
     HORIZON = 50
     DT = 0.05
-    MAX_ITER = 50
+    MAX_ITER = 100
     NUM_AGENTS = 4
     
     start_poses, goal_poses = generate_circular_scenario(
         num_agents=NUM_AGENTS, 
         center_x=5.0, 
         center_y=5.0, 
-        radius=10.0, 
+        radius=15.0, 
         initial_v=0.0
     )
 
     env = EnvironmentMap(penalty_value=1000.0, inflation_radius=0.5)
-    obs1 = RectangleObstacle(x_min=-4.0, x_max=4.0, y_min=-4.0, y_max=4.0)
-    obs2 = RectangleObstacle(x_min=-4.0, x_max=4.0, y_min=6.0, y_max=14.0)
-    obs3 = RectangleObstacle(x_min=6.0, x_max=14.0, y_min=6.0, y_max=14.0)
-    obs4 = RectangleObstacle(x_min=6.0, x_max=14.0, y_min=-4.0, y_max=4.0)
+    obs1 = RectangleObstacle(x_min=-10.0, x_max=4.0, y_min=-10.0, y_max=4.0)
+    obs2 = RectangleObstacle(x_min=-10.0, x_max=4.0, y_min=6.0, y_max=20.0)
+    obs3 = RectangleObstacle(x_min=6.0, x_max=20.0, y_min=6.0, y_max=20.0)
+    obs4 = RectangleObstacle(x_min=6.0, x_max=20.0, y_min=-10.0, y_max=4.0)
 
     env.add_obstacle(obs1)
     env.add_obstacle(obs2)
@@ -229,7 +229,7 @@ def main():
 
     # 4. 애니메이션 저장 (저장하지 않으려면 SAVE_ANIMATION = False 로 설정)
     SAVE_ANIMATION = True
-    ANIMATION_PATH = "resource/path_planning_narrow_corridor_1.gif"  # .gif 또는 .mp4
+    ANIMATION_PATH = "resource/path_planning_narrow_crosswalk.gif"  # .gif 또는 .mp4
 
     if SAVE_ANIMATION:
         # mp4로 저장하려면 ffmpeg 설치 필요: pip install ffmpeg-python 또는 conda install ffmpeg

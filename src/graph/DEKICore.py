@@ -58,6 +58,8 @@ class VNode(Node):
         self.lambda_dual = np.zeros((self.dim, 1))  # 누적 패널티 (Dual variable)
         self.z_target: Optional[np.ndarray] = None  # 현재 스텝의 합의점
         self.z_target_prev: Optional[np.ndarray] = None # 이전 스텝의 합의점 (residual balancing용)
+
+        self.C_xx: np.ndarray = np.eye(self.dim) * init_std ** 2
         
         # Method-specific hyperparameters
         self.alpha_cov = alpha_cov
@@ -138,19 +140,17 @@ class VNode(Node):
 
         # 수정된 표준 EKI 공식: X_new = X + K * ( -E_stacked + noise )
         self.ensemble = X + K @ (-E_stacked + noise)
+        x_mean_new = self.ensemble.mean(axis=1, keepdims=True)
+        Xc    = self.ensemble - x_mean_new
+        self.C_xx = (Xc @ Xc.T) / (N - 1)
 
         # ── Step 2: ADMM 이동 — 평균에만 적용, 분산 구조 유지 ─────────────────
         if self.rho > 0 and self.z_target is not None:
-            x_mean_new = self.ensemble.mean(axis=1, keepdims=True)   # 업데이트 후 평균
 
             y_virt = self.z_target - (self.lambda_dual / self.rho)
 
-            # C_xx 재계산 (X_new 기준)
-            Xc    = self.ensemble - x_mean_new
-            C_xx  = (Xc @ Xc.T) / (N - 1)
-
             # ADMM 평균 이동량: (ρC_xx)(ρC_xx + I)^{-1} (y_virt - x_mean)
-            A     = self.rho * C_xx
+            A     = self.rho * self.C_xx
             shift = A @ np.linalg.inv(A + np.eye(self.dim)) @ (y_virt - x_mean_new)
 
             # 모든 파티클에 동일한 shift 적용 → 분산 구조 보존
@@ -180,11 +180,7 @@ class VNode(Node):
 
     def _update_penalty_covariance(self) -> None:
         """ 제안 기법: 파티클의 퍼짐 정도(Trace of Covariance)에 반비례하게 rho 설정 """
-        X = self.ensemble
-        Xc = X - np.mean(X, axis=1, keepdims=True)
-        C_xx = (Xc @ Xc.T) / (self.n_particles - 1)
-        
-        trace_c = np.trace(C_xx)
+        trace_c = np.trace(self.C_xx)
         # 퍼져있을 때 (탐색 중) -> rho 작음 / 뭉쳐있을 때 (수렴 중) -> rho 큼
         new_rho = self.rho_max / (1.0 + self.alpha_cov * trace_c)
         self.rho = min(new_rho, self.rho_max)
@@ -376,10 +372,8 @@ class FactorGraph(Graph):
     """
     Factor graph that runs EKI-ADMM based belief propagation.
     """
-
-    def __init__(self, max_workers: int = 4) -> None:
+    def __init__(self) -> None:
         super().__init__()
-        self.max_workers = max_workers
 
     @property
     def vnodes(self) -> List[VNode]:

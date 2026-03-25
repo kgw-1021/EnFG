@@ -507,7 +507,7 @@ def run_ensemble_visualization():
         initial_guesses, anchor_noise, ro_noise = build_scenario()
 
     graph, vnodes = build_graph(
-        'DEKI_res', GT, anchors, unknowns, edges_list,
+        'EKI', GT, anchors, unknowns, edges_list,
         measurements, initial_guesses, anchor_noise, ro_noise
     )
 
@@ -973,9 +973,9 @@ def run_algo_comparison(num_anchors: int, n_trials: int = 100, n_iter: int = 30,
 
 if __name__ == "__main__":
     # run_test()
-    # run_ensemble_visualization()
+    run_ensemble_visualization()
     # run_gabp_visualization()
     # run_anchor_sensitivity(num_anchors=3)
 
     # 앵커 수를 원하는 값으로 지정하세요 (1~8)
-    run_algo_comparison(num_anchors=4)
+    # run_algo_comparison(num_anchors=4)

@@ -54,10 +54,10 @@ def run_agent_process(agent_id: int, start_pos: np.ndarray, goal_pos: np.ndarray
     ensemble_history = []
 
     # 초기 궤적 기록 및 히스토리 저장
-    mean_history.append(agent.extract_trajectory())
+    mean_history.append(agent.get_mean_trajectory())
     ensemble_history.append(agent.get_ensemble_data()) # Shape: [Horizon, 4, N_Particles]
 
-    shm.write(agent_id, agent.extract_trajectory())
+    shm.write(agent_id, agent.get_mean_trajectory())
     
     barrier.wait()
 
@@ -65,9 +65,9 @@ def run_agent_process(agent_id: int, start_pos: np.ndarray, goal_pos: np.ndarray
         shared_trajectories = {i: shm.array[i].copy() for i in range(num_agents)}
         
         agent.update_external_beliefs(shared_trajectories)
-        agent.step(iterations=1)
+        agent.step(iterations=3)
         
-        current_traj = agent.extract_trajectory()
+        current_traj = agent.get_mean_trajectory()
         current_ensemble = agent.get_ensemble_data()
         shm.write(agent_id, current_traj)
         
@@ -90,8 +90,8 @@ def main():
     # === 1. 파라미터 세팅 (에이전트 2개로 축소) ===
     HORIZON = 50
     DT = 0.1
-    MAX_ITER = 20
-    NUM_AGENTS = 2  
+    MAX_ITER = 50
+    NUM_AGENTS = 4  
     
     start_poses, goal_poses = generate_circular_scenario(
         num_agents=NUM_AGENTS, 
