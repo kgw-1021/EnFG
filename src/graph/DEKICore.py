@@ -157,7 +157,30 @@ class VNode(Node):
             self.ensemble = self.ensemble + shift
 
         # (선택) EKI 고유의 앙상블 붕괴를 막기 위한 아주 작은 기본 인플레이션 노이즈
-        self.ensemble += np.random.randn(self.dim, N) * self.noise_std
+        # ── Step 3: Normalized Hybrid Covariance Inflation ──
+        
+        # 1. 고유값 분해 및 절삭 (PSD 강제 달성)
+        evals, evecs = np.linalg.eigh(self.C_xx)
+        evals = np.maximum(evals, 0.0)
+        
+        # 2. 고유값 정규화 (핵심 해결책 ⭐️)
+        # C_xx가 아무리 커져도 노이즈 크기가 폭발하지 않도록 최대값을 1로 스케일링
+        max_eval = np.max(evals)
+        if max_eval > 1e-8:
+            evals_normalized = evals / max_eval
+        else:
+            evals_normalized = evals
+            
+        # 3. 크기가 1로 통제된 형태(Shape) 매트릭스 조립
+        sqrt_C_xx_norm = evecs @ np.diag(np.sqrt(evals_normalized))
+        
+        # 4. 방향성은 C_xx를 따르되, 절대적인 크기는 오직 noise_std가 결정
+        cov_aware_noise = sqrt_C_xx_norm @ np.random.randn(self.dim, N)
+        self.ensemble += cov_aware_noise * self.noise_std
+        
+        # 5. 완전한 붕괴를 막는 최소한의 하한선 노이즈 (Explosion 방지)
+        min_floor_noise = np.random.randn(self.dim, N) * (self.noise_std * 0.1)
+        self.ensemble += min_floor_noise
 
     def update_admm_dual(self) -> None:
         """ 2. 파티클 업데이트 후, 합의점(z_target)과의 오차를 lambda에 누적 """

@@ -73,7 +73,7 @@ def run_agent_process(agent_id: int, start_pos: np.ndarray, goal_pos: np.ndarray
         
         # [Step B] 외부 정보(타 로봇 궤적) 업데이트 및 내 그래프 최적화 (1 스텝)
         agent.update_external_beliefs(shared_trajectories)
-        agent.step(iterations=3)
+        agent.step(iterations=5)
         
         # [Step C] 계산된 나의 새로운 궤적을 공유 메모리에 브로드캐스트
         shm.write(agent_id, agent.get_mean_trajectory())
@@ -238,7 +238,7 @@ def main():
 
     # 4. 애니메이션 저장 (저장하지 않으려면 SAVE_ANIMATION = False 로 설정)
     SAVE_ANIMATION = True
-    ANIMATION_PATH = "resource/path_planning_multi_obs.gif"  # .gif 또는 .mp4
+    ANIMATION_PATH = "resource/path_planning_multi_obs2.gif"  # .gif 또는 .mp4
 
     if SAVE_ANIMATION:
         # mp4로 저장하려면 ffmpeg 설치 필요: pip install ffmpeg-python 또는 conda install ffmpeg

@@ -90,8 +90,8 @@ def main():
     # === 1. 파라미터 세팅 (에이전트 2개로 축소) ===
     HORIZON = 50
     DT = 0.1
-    MAX_ITER = 50
-    NUM_AGENTS = 4  
+    MAX_ITER = 40
+    NUM_AGENTS = 8  
     
     start_poses, goal_poses = generate_circular_scenario(
         num_agents=NUM_AGENTS, 
@@ -102,6 +102,7 @@ def main():
     )
 
     env = EnvironmentMap(penalty_value=1000.0, inflation_radius=0.5)
+    # obs1 = CircleObstacle(cx=5.0, cy=5.0, radius=5.0)
     obs1 = CircleObstacle(cx=8.0, cy=7.0, radius=1.5)
     obs2 = CircleObstacle(cx=3.0, cy=3.0, radius=1.5)
     obs3 = CircleObstacle(cx=-1.0, cy=-1.0, radius=1.5)

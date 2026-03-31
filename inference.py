@@ -192,7 +192,7 @@ def build_scenario():
         if name in anchors:
             initial_guesses[name] = GT[name].copy().astype(float)
         else:
-            initial_guesses[name] = GT[name].copy().astype(float) + np.random.randn(2) * 1.0
+            initial_guesses[name] = GT[name].copy().astype(float) + np.random.randn(2) * 8.0
 
     return GT, anchors, unknowns, edges, measurements, initial_guesses, anchor_noise, ro_noise
 
@@ -237,7 +237,7 @@ def build_graph(algo_type, GT, anchors, unknowns, edges_list,
                 vn = VNodeDEKI(name, dims=[2], n_particles=1000, noise_std=1.0,
                                rho_init=1.0, rho_update_method='residual')
             mean_guess = initial_guesses[name].reshape(2, 1)
-            vn.ensemble = mean_guess + np.random.randn(2, vn.n_particles) * 3.0
+            vn.ensemble = mean_guess + np.random.randn(2, vn.n_particles) * 8.0
 
         graph.nodes.append(vn)
         vnodes[name] = vn
@@ -507,7 +507,7 @@ def run_ensemble_visualization():
         initial_guesses, anchor_noise, ro_noise = build_scenario()
 
     graph, vnodes = build_graph(
-        'EKI', GT, anchors, unknowns, edges_list,
+        'DEKI_res', GT, anchors, unknowns, edges_list,
         measurements, initial_guesses, anchor_noise, ro_noise
     )
 

@@ -87,8 +87,8 @@ class Agent:
             name=f"A{self.id}_t{t}",
             dims=[4],
             n_particles=self.n_particles,
-            init_std=5.0,
-            noise_std=1e-2,
+            init_std=10.0,
+            noise_std=1.0,
             rho_init=1.0,
             rho_update_method="residual",
         )

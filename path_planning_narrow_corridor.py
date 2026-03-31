@@ -63,7 +63,7 @@ def run_agent_process(agent_id: int, start_pos: np.ndarray, goal_pos: np.ndarray
     shm = CommunicationSharedMemory(num_agents, horizon, state_dim=4, create=False)
     
     # 3. 초기 궤적을 공유 메모리에 기록
-    shm.write(agent_id, agent.get_mean_trajectorys())
+    shm.write(agent_id, agent.get_mean_trajectory())
     
     # [동기화] 모든 프로세스가 초기화를 끝내고 공유 메모리에 첫 기록을 할 때까지 대기
     barrier.wait()
@@ -231,7 +231,7 @@ def main():
 
     # 4. 애니메이션 저장 (저장하지 않으려면 SAVE_ANIMATION = False 로 설정)
     SAVE_ANIMATION = True
-    ANIMATION_PATH = "resource/path_planning_narrow_corridor.gif"  # .gif 또는 .mp4
+    ANIMATION_PATH = "resource/path_planning_narrow_corridor2.gif"  # .gif 또는 .mp4
 
     if SAVE_ANIMATION:
         # mp4로 저장하려면 ffmpeg 설치 필요: pip install ffmpeg-python 또는 conda install ffmpeg
