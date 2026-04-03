@@ -2,7 +2,7 @@ import numpy as np
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
-from src.graph.DEKICore import FactorGraph, VNode
+from src.graph.DEKICore_vanilla import FactorGraph, VNode
 from src.graph.factors import (
     GoalFactor, DynamicsFactor, CollisionFactor, GridObsFactor,
     VelocityConstraintFNode, ControlSmoothnessFNode, StartFactor,
@@ -47,10 +47,10 @@ class Agent:
         env_map=None,
         safe_dist: float = 0.5,
         collision_weight: float = 1e-4,
-        dyn_weight: float = 1e-4,
-        smooth_weight: float = 1e-1,
-        vel_weight: float = 1e-1,
-        obs_weight: float = 1e-4,
+        dyn_weight: float = 1e-2,
+        smooth_weight: float = 10.0,
+        vel_weight: float = 10.0,
+        obs_weight: float = 1e-1,
         start_goal_weight: float = 1e-4,
     ):
         self.id = agent_id

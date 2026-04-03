@@ -268,7 +268,7 @@ class RangeBearingFactorGLM(BinaryFNodeGLM):
 # =============================================================================
 
 def build_scenario():
-    np.random.seed(77)
+    np.random.seed(100)
     GT = {
         'V0': np.array([0, 0]),  'V1': np.array([5, 0]),  'V2': np.array([10, 0]),
         'V3': np.array([0, 5]),  'V4': np.array([5, 5]),  'V5': np.array([10, 5]),
@@ -303,7 +303,7 @@ def build_scenario():
         if name in anchors:
             initial_guesses[name] = GT[name].copy().astype(float)
         else:
-            initial_guesses[name] = GT[name].copy().astype(float) + np.random.randn(2) * 10.0
+            initial_guesses[name] = GT[name].copy().astype(float) + np.random.randn(2) * 3.0
 
     return GT, anchors, unknowns, edges, measurements, initial_guesses, anchor_noise, ro_noise, bearing_noise
 
@@ -443,7 +443,7 @@ def run_test():
     colors = plt.cm.tab10(np.linspace(0, 1, len(unknowns)))
 
     def plot_network(ax, title, hist=None, color_override=None):
-        ax.set_title(title, fontsize=16, fontweight='bold', pad=15)
+        # ax.set_title(title, fontsize=16, fontweight='bold', pad=15)
         
         # 1. GT 노드들을 각 궤적과 동일한 색상으로 표시
         for idx, name in enumerate(unknowns):
@@ -742,7 +742,7 @@ def run_gabp_visualization():
 
 
 if __name__ == "__main__":
-    run_test()
-    # run_ensemble_visualization(algo='DEKI_CI')  # 'DEKI_res', 'EKI' 등으로 변경 가능
+    # run_test()
+    # run_ensemble_visualization(algo='DEKI_res')  # 'DEKI_res', 'EKI' 등으로 변경 가능
     # run_gabp_visualization()
-    # run_algo_comparison(num_anchors=2)
+    run_algo_comparison(num_anchors=3)

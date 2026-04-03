@@ -121,7 +121,7 @@ def check_collision(trajectories: dict, robot_radius: float = 0.3) -> bool:
 def main():
     # 시뮬레이션 파라미터 세팅
     HORIZON = 50
-    DT = 0.05
+    DT = 0.1
     MAX_ITER = 50
     NUM_AGENTS = 8
     
@@ -132,9 +132,9 @@ def main():
         initial_v=0.0
     )
 
-    env = EnvironmentMap(penalty_value=1000.0, inflation_radius=0.5)
-    obs1 = RectangleObstacle(x_min=-1.0, x_max=1.0, y_min=-10.0, y_max=-1.5)
-    obs2 = RectangleObstacle(x_min=-1.0, x_max=1.0, y_min=1.5, y_max=10.0)
+    env = EnvironmentMap(penalty_value=1000.0, inflation_radius=0.1)
+    obs1 = RectangleObstacle(x_min=-1.0, x_max=1.0, y_min=-10.0, y_max=-0.8)
+    obs2 = RectangleObstacle(x_min=-1.0, x_max=1.0, y_min=0.8, y_max=10.0)
 
     env.add_obstacle(obs1)
     env.add_obstacle(obs2)

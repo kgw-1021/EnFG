@@ -10,6 +10,41 @@ from src.graph.agent import Agent
 from src.communication.shared_mem import CommunicationSharedMemory
 from src.map.map_generator import EnvironmentMap, CircleObstacle, RectangleObstacle
 
+def generate_narrow_corridor_scenario(num_agents: int, agent_width: float = 1.0, gap: float = 5.0, initial_v: float = 0.5):
+    """
+    원의 중심과 반지름을 기준으로 에이전트들을 원의 둘레에 균등하게 배치하고,
+    정반대 편을 목표 지점으로 설정합니다.
+    """
+    start_poses = []
+    goal_poses = []
+    
+    # 1. 왼쪽 그룹 (4명) -> 오른쪽으로 이동
+    for i in range(num_agents // 2):
+        # y 좌표는 중앙을 기준으로 위아래로 배치
+        start_x = -gap
+        start_y = (i - 1.5) * agent_width 
+        
+        goal_x = gap
+        goal_y = (i - 1.5) * agent_width
+        
+        theta = 0.0  # 오른쪽(0도)을 바라봄
+        
+        start_poses.append(np.array([start_x, start_y, theta, initial_v]))
+        goal_poses.append(np.array([goal_x, goal_y]))
+
+        start_x = gap
+        start_y = (i - 1.5) * agent_width
+        
+        goal_x = -gap
+        goal_y = (i - 1.5) * agent_width
+        
+        theta = np.pi  # 왼쪽(180도)을 바라봄
+        
+        start_poses.append(np.array([start_x, start_y, theta, initial_v]))
+        goal_poses.append(np.array([goal_x, goal_y]))
+        
+    return start_poses, goal_poses
+
 def generate_circular_scenario(num_agents: int, center_x: float = 5.0, center_y: float = 5.0, radius: float = 5.0, initial_v: float = 0.5):
     """
     원의 중심과 반지름을 기준으로 에이전트들을 원의 둘레에 균등하게 배치하고,
@@ -90,7 +125,7 @@ def main():
     # === 1. 파라미터 세팅 (에이전트 2개로 축소) ===
     HORIZON = 50
     DT = 0.1
-    MAX_ITER = 40
+    MAX_ITER = 60
     NUM_AGENTS = 8  
     
     start_poses, goal_poses = generate_circular_scenario(
@@ -101,25 +136,39 @@ def main():
         initial_v=0.0
     )
 
+    # start_poses, goal_poses = generate_narrow_corridor_scenario(
+    #     num_agents=NUM_AGENTS, 
+    #     agent_width=1.5, 
+    #     gap=10.0, 
+    #     initial_v=0.0
+    # )
+
+    # env = EnvironmentMap(penalty_value=1000.0, inflation_radius=0.5)
+    # obs1 = RectangleObstacle(x_min=-1.0, x_max=1.0, y_min=-10.0, y_max=-0.8)
+    # obs2 = RectangleObstacle(x_min=-1.0, x_max=1.0, y_min=0.8, y_max=10.0)
+
+    # env.add_obstacle(obs1)
+    # env.add_obstacle(obs2)
+
     env = EnvironmentMap(penalty_value=1000.0, inflation_radius=0.5)
-    # obs1 = CircleObstacle(cx=5.0, cy=5.0, radius=5.0)
-    obs1 = CircleObstacle(cx=8.0, cy=7.0, radius=1.5)
-    obs2 = CircleObstacle(cx=3.0, cy=3.0, radius=1.5)
-    obs3 = CircleObstacle(cx=-1.0, cy=-1.0, radius=1.5)
-    obs4 = CircleObstacle(cx=10.0, cy=3.0, radius=1.0)
-    obs5 = RectangleObstacle(x_min=2.0, x_max=3.0, y_min=7.0, y_max=9.0)
-    obs6 = CircleObstacle(cx=7.0, cy=-4.0, radius=1.5)
-    obs7 = CircleObstacle(cx=-3.0, cy=6.0, radius=1.0)
-    obs8 = CircleObstacle(cx=5.0, cy=11.5, radius=1.2)
+    obs1 = CircleObstacle(cx=5.0, cy=5.0, radius=8.0)
+    # obs1 = CircleObstacle(cx=8.0, cy=7.0, radius=1.5)
+    # obs2 = CircleObstacle(cx=3.0, cy=3.0, radius=1.5)
+    # obs3 = CircleObstacle(cx=-1.0, cy=-1.0, radius=1.5)
+    # obs4 = CircleObstacle(cx=10.0, cy=3.0, radius=1.0)
+    # obs5 = RectangleObstacle(x_min=2.0, x_max=3.0, y_min=7.0, y_max=9.0)
+    # obs6 = CircleObstacle(cx=7.0, cy=-4.0, radius=1.5)
+    # obs7 = CircleObstacle(cx=-3.0, cy=6.0, radius=1.0)
+    # obs8 = CircleObstacle(cx=5.0, cy=11.5, radius=1.2)
 
     env.add_obstacle(obs1)
-    env.add_obstacle(obs2)
-    env.add_obstacle(obs3)
-    env.add_obstacle(obs4)
-    env.add_obstacle(obs5)
-    env.add_obstacle(obs6)
-    env.add_obstacle(obs7)
-    env.add_obstacle(obs8)
+    # env.add_obstacle(obs2)
+    # env.add_obstacle(obs3)
+    # env.add_obstacle(obs4)
+    # env.add_obstacle(obs5)
+    # env.add_obstacle(obs6)
+    # env.add_obstacle(obs7)
+    # env.add_obstacle(obs8)
 
     # === 2. 공유 자원 및 히스토리 저장소 생성 ===
     print("Initialize Shared Memory, Barrier, and Manager...")
@@ -215,7 +264,7 @@ def main():
                                   init_func=init, blit=True, interval=500, repeat=True)
 
     SAVE_ANIMATION = True
-    ANIMATION_PATH = "resource/path_planning_2_agent_iteration.gif" 
+    ANIMATION_PATH = "resource/path_planning_2_agent_iteration_test.gif" 
 
     if SAVE_ANIMATION:
         writer = animation.PillowWriter(fps=5)

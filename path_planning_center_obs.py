@@ -46,7 +46,7 @@ def run_agent_process(agent_id: int, start_pos: np.ndarray, goal_pos: np.ndarray
     print(f"[Agent {agent_id}] Process Started.")
     
     # 1. 프로세스 내부에서 자기 자신의 에이전트 객체 생성 (메모리 완전 독립)
-    agent = Agent(agent_id=agent_id, start_pos=start_pos, goal_pos=goal_pos, n_particles=1000, horizon=horizon, dt=dt, env_map=env_map, safe_dist=0.5)
+    agent = Agent(agent_id=agent_id, start_pos=start_pos, goal_pos=goal_pos, n_particles=1000, horizon=horizon, dt=dt, env_map=env_map, safe_dist=1.0)
     
     # 타 에이전트와의 충돌 팩터 부착
     for other_id in range(num_agents):
@@ -71,7 +71,7 @@ def run_agent_process(agent_id: int, start_pos: np.ndarray, goal_pos: np.ndarray
         
         # [Step B] 외부 정보(타 로봇 궤적) 업데이트 및 내 그래프 최적화 (1 스텝)
         agent.update_external_beliefs(shared_trajectories)
-        agent.step(iterations=5)
+        agent.step(iterations=3)
         
         # [Step C] 계산된 나의 새로운 궤적을 공유 메모리에 브로드캐스트
         shm.write(agent_id, agent.get_mean_trajectory())
@@ -123,12 +123,12 @@ def main():
         num_agents=NUM_AGENTS, 
         center_x=5.0, 
         center_y=5.0, 
-        radius=5.0, 
+        radius=15.0, 
         initial_v=0.0
     )
 
     env = EnvironmentMap(penalty_value=1000.0, inflation_radius=0.5)
-    obs1 = CircleObstacle(cx=5.0, cy=5.0, radius=2.5)
+    obs1 = CircleObstacle(cx=5.0, cy=5.0, radius=8.0)
     env.add_obstacle(obs1)
     # env.visualize(x_range=(-2, 12), y_range=(-2, 12), resolution=0.05)
 
@@ -170,8 +170,8 @@ def main():
     # --- 애니메이션 설정 ---
     fig, ax = plt.subplots(figsize=(10, 10))
     ax.set_title(f"Multi-Robot Trajectory Animation ({NUM_AGENTS} Agents)", fontsize=16, fontweight='bold')
-    ax.set_xlim(-2, 12)
-    ax.set_ylim(-2, 12)
+    plt.xlim(-15, 25)
+    plt.ylim(-15, 25)
     ax.set_aspect('equal') # 원형 교차가 찌그러지지 않도록 비율 고정
     ax.grid(True, linestyle='--', alpha=0.6)
     ax.set_xlabel("X Position (m)")
@@ -256,8 +256,8 @@ def main():
         plt.scatter(px[0], py[0], color=c, marker='s', s=100, edgecolors='black')
         # plt.scatter(goal_poses[i][0], goal_poses[i][1], color=c, marker='*', s=250, edgecolors='black', label=f"A{i} Goal")
         plt.plot(px, py, color=c, marker='o', markersize=4, linestyle='-', alpha=0.7, label=f"A{i} Path")
-    plt.xlim(-2, 12)
-    plt.ylim(-2, 12)
+    plt.xlim(-15, 25)
+    plt.ylim(-15, 25)
     plt.grid(True, linestyle='--', alpha=0.6)
 
     plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=9)

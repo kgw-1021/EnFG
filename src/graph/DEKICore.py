@@ -8,7 +8,7 @@ import numpy as np
 from src.graph.graph import Node, Edge, Graph
 
 # ─────────────────────────────────────────────────────────────────────────────
-# VNode  –  Variable Node (Upgraded to EKS + ADMM)
+# VNode  –  Variable Node (Upgraded to EKS + ADMM with Debugging)
 # ─────────────────────────────────────────────────────────────────────────────
 
 class VNode(Node):
@@ -35,36 +35,43 @@ class VNode(Node):
         init_std: float = 1.0,
         # --- ADMM Parameters ---
         rho_init: float = 1.0,
-        rho_update_method: str = 'residual',  # 'covariance', 'residual', 'fixed'
+        rho_update_method: str = 'residual',
         rho_max: float = 100.0,
-        alpha_cov: float = 1.0,     # For 'covariance' method
-        mu_res: float = 5.0,       # For 'residual' method
-        tau_res: float = 1.5,        # For 'residual' method
+        alpha_cov: float = 1.0,
+        mu_res: float = 5.0,
+        tau_res: float = 1.5,
+        # --- Debugging ---
+        debug_mode: bool = False,
     ) -> None:
         super().__init__(name, dims)
         self.n_particles = n_particles
-        self.noise_std = noise_std
+        
+        # 기준 노이즈(base)와 현재 이터레이션에서 적용될 동적 노이즈(current) 분리
+        self.base_noise_std = noise_std
+        self.current_noise_std = noise_std 
 
         d = int(np.prod(dims)) if dims else 1
-        
-        # Initialize ensemble (prior)
         self.ensemble = np.random.randn(d, self.n_particles) * init_std
         
-        # --- ADMM State Variables ---
         self.rho = rho_init
         self.rho_method = rho_update_method.lower()
         self.rho_max = rho_max
-        
-        self.lambda_dual = np.zeros((self.dim, 1))  # 누적 패널티 (Dual variable)
-        self.z_target: Optional[np.ndarray] = None  # 현재 스텝의 합의점
-        self.z_target_prev: Optional[np.ndarray] = None # 이전 스텝의 합의점 (residual balancing용)
-
+        self.lambda_dual = np.zeros((self.dim, 1))
+        self.z_target: Optional[np.ndarray] = None
+        self.z_target_prev: Optional[np.ndarray] = None 
         self.C_xx: np.ndarray = np.eye(self.dim) * init_std ** 2
         
-        # Method-specific hyperparameters
         self.alpha_cov = alpha_cov
         self.mu_res = mu_res
         self.tau_res = tau_res
+
+        self.debug_mode = debug_mode
+        self.debug_history = {
+            'rho': [], 'trace_C_xx': [], 'primal_residual': [],
+            'dual_residual': [], 'lambda_norm': [], 'mean': [],
+            'z_target': [], 'factor_residuals': [], 
+            'current_noise': []  # 노이즈 스케일 변화 추적
+        }
 
     # ── helpers ──────────────────────────────────────────────────────────────
 
@@ -77,24 +84,66 @@ class VNode(Node):
     def dim(self) -> int:
         return self.ensemble.shape[0]
 
+    def _compute_residuals(self) -> Tuple[float, float]:
+        """ 원시 잔차(r)와 쌍대 잔차(s)를 계산하여 반환합니다. """
+        if self.z_target is None or self.z_target_prev is None:
+            return 0.0, 0.0
+        
+        x_mean = self.mean.reshape(-1, 1)
+        r = float(np.linalg.norm(x_mean - self.z_target))
+        s = float(np.linalg.norm(self.rho * (self.z_target - self.z_target_prev)))
+        return r, s
+
+    def _record_debug_info(self) -> None:
+        """ 현재 스텝의 주요 파라미터 및 지표, 팩터별 잔차를 history에 저장합니다. """
+        r, s = self._compute_residuals()
+        
+        self.debug_history['rho'].append(self.rho)
+        self.debug_history['trace_C_xx'].append(float(np.trace(self.C_xx)))
+        self.debug_history['primal_residual'].append(r)
+        self.debug_history['dual_residual'].append(s)
+        self.debug_history['lambda_norm'].append(float(np.linalg.norm(self.lambda_dual)))
+        self.debug_history['mean'].append(self.mean.copy())
+        self.debug_history['z_target'].append(
+            self.z_target.copy() if self.z_target is not None else None
+        )
+        
+        # 각 팩터로부터 받은 앙상블 잔차(E) 수집 및 저장
+        factor_res_dict = {}
+        for edge in self.edges:
+            msg = edge._messages.get(self.name)
+            if msg is not None:
+                # 현재 에지에 연결된 다른 노드(Factor Node)를 가져와 이름을 키로 사용
+                fnode = edge.get_other(self)
+                # msg[0]은 팩터에서 전송된 앙상블 잔차 E, 형태는 (d_obs, N)
+                factor_res_dict[fnode.name] = msg[0].copy() 
+                
+        self.debug_history['factor_residuals'].append(factor_res_dict)
+
+    def _update_dynamic_scale(self) -> None:
+        r, s = self._compute_residuals()
+        max_res = max(r, s)
+        
+        # 잔차가 클 때는 1.0 (최대치) 유지, 잔차가 줄어들면 스케일도 함께 감소
+        # 비례 상수 2.0은 잔차가 줄기 시작할 때 조금 더 여유있게 탐색을 허용하기 위한 튜닝값입니다.
+        scale_factor = min(1.0, max_res * 2.0)
+        
+        # 완전한 0이 되면 EKI 칼만 이득 역행렬 계산 시 특이성 문제가 생길 수 있으므로
+        # 극소수의 하한선(1e-8)을 두어 수치적 안정성을 확보합니다.
+        self.current_noise_std = self.base_noise_std * max(scale_factor, 1e-8)
+
     # ── EKI update ───────────────────────────────────────────────────────────
 
     def collect_messages(self) -> List[Tuple[np.ndarray, np.ndarray]]:
         """
         Ask every connected factor edge for the (residual, H) pair it has
         computed for this node.
-
-        Returns a list of (r_j, H_j) tuples where
-            r_j  : residual matrix  shape (obs_dim_j, n_particles)
-            H_j  : sensitivity matrix shape (obs_dim_j, state_dim)
-        Only edges that have already stored a message for this node are
-        included.
         """
         pairs = []
         for edge in self.edges:
             msg = edge._messages.get(self.name)
             if msg is not None:
-                pairs.append(msg)          # (r_j, H_j)
+                pairs.append(msg)
         return pairs
 
     def eki_update(self) -> None:
@@ -133,7 +182,6 @@ class VNode(Node):
         # 칼만 이득 계산 (수치적 안정을 위해 작은 jitter 추가)
         K = C_xy @ np.linalg.inv(C_yy + Gamma_stacked + 1e-8 * np.eye(Gamma_stacked.shape[0]))
 
-        # ── [오류 1 수정] 올바른 Perturbed Observation 생성 및 부호 수정 ──
         # np.random.multivariate_normal은 (N, d_obs) 형태로 반환하므로 .T 로 (d_obs, N)을 맞춤
         zero_mean = np.zeros(Gamma_stacked.shape[0])
         noise = np.random.multivariate_normal(zero_mean, Gamma_stacked, N).T
@@ -156,31 +204,24 @@ class VNode(Node):
             # 모든 파티클에 동일한 shift 적용 → 분산 구조 보존
             self.ensemble = self.ensemble + shift
 
-        # (선택) EKI 고유의 앙상블 붕괴를 막기 위한 아주 작은 기본 인플레이션 노이즈
-        # ── Step 3: Normalized Hybrid Covariance Inflation ──
+        # 1. 노이즈 스케일 동적 업데이트
+        self._update_dynamic_scale()
         
-        # 1. 고유값 분해 및 절삭 (PSD 강제 달성)
+        # 2. 고유값 분해 및 정규화 (방향성 추출)
         evals, evecs = np.linalg.eigh(self.C_xx)
         evals = np.maximum(evals, 0.0)
         
-        # 2. 고유값 정규화 (핵심 해결책 ⭐️)
-        # C_xx가 아무리 커져도 노이즈 크기가 폭발하지 않도록 최대값을 1로 스케일링
         max_eval = np.max(evals)
         if max_eval > 1e-8:
             evals_normalized = evals / max_eval
         else:
             evals_normalized = evals
             
-        # 3. 크기가 1로 통제된 형태(Shape) 매트릭스 조립
         sqrt_C_xx_norm = evecs @ np.diag(np.sqrt(evals_normalized))
         
-        # 4. 방향성은 C_xx를 따르되, 절대적인 크기는 오직 noise_std가 결정
+        # 3. 방향성(Shape) 매트릭스에 줄어드는 스케일(current_noise_std)을 곱해 적용
         cov_aware_noise = sqrt_C_xx_norm @ np.random.randn(self.dim, N)
-        self.ensemble += cov_aware_noise * self.noise_std
-        
-        # 5. 완전한 붕괴를 막는 최소한의 하한선 노이즈 (Explosion 방지)
-        min_floor_noise = np.random.randn(self.dim, N) * (self.noise_std * 0.1)
-        self.ensemble += min_floor_noise
+        self.ensemble += cov_aware_noise * self.current_noise_std
 
     def update_admm_dual(self) -> None:
         """ 2. 파티클 업데이트 후, 합의점(z_target)과의 오차를 lambda에 누적 """
@@ -198,13 +239,16 @@ class VNode(Node):
         elif self.rho_method == 'residual':
             self._update_penalty_residual_balancing()
         
+        # --- 디버깅 모드일 경우 정보 기록 ---
+        if self.debug_mode:
+            self._record_debug_info()
+            
         # 상태 저장
         self.z_target_prev = self.z_target.copy()
 
     def _update_penalty_covariance(self) -> None:
         """ 제안 기법: 파티클의 퍼짐 정도(Trace of Covariance)에 반비례하게 rho 설정 """
         trace_c = np.trace(self.C_xx)
-        # 퍼져있을 때 (탐색 중) -> rho 작음 / 뭉쳐있을 때 (수렴 중) -> rho 큼
         new_rho = self.rho_max / (1.0 + self.alpha_cov * trace_c)
         self.rho = min(new_rho, self.rho_max)
 
@@ -213,9 +257,7 @@ class VNode(Node):
         if self.z_target_prev is None:
             return
 
-        x_mean = self.mean.reshape(-1, 1)
-        r = np.linalg.norm(x_mean - self.z_target)
-        s = np.linalg.norm(self.rho * (self.z_target - self.z_target_prev))
+        r, s = self._compute_residuals()
 
         if r > self.mu_res * s:
             self.rho = min(self.rho * self.tau_res, self.rho_max)
@@ -229,10 +271,6 @@ class VNode(Node):
 class _FNodeBase(Node, ABC):
     """
     Internal base shared by UnaryFNode and BinaryFNode.
-
-    Subclasses that implement *concrete* measurement / constraint models
-    should override ``_compute_residual_*`` (see each subclass for the
-    exact signature).
     """
 
     def __init__(self, name: str, dims: list) -> None:
@@ -281,10 +319,6 @@ class BinaryFNode(_FNodeBase):
     def _compute_z_targets(self, mean0: np.ndarray, mean1: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         """
         ADMM 합의를 위한 가상의 목표점(z_target) 계산
-        
-        Returns:
-            z_target0 (np.ndarray): vnode0이 가야 할 목표 좌표 (d0,)
-            z_target1 (np.ndarray): vnode1이 가야 할 목표 좌표 (d1,)
         """
         pass
 
@@ -311,7 +345,6 @@ class BinaryFNode(_FNodeBase):
         z_target0, z_target1 = self._compute_z_targets(vnode0.mean, vnode1.mean)
         
         # 3. 메시지에 (E, Gamma, z_target) 3가지를 담아서 전송
-        # VNode에서 z_target을 (dim, 1) 형태로 기대하므로 reshape를 보장해줍니다.
         edge0._messages[vnode0.name] = (E, self.gamma, z_target0.reshape(-1, 1))
         edge1._messages[vnode1.name] = (E, self.gamma, z_target1.reshape(-1, 1))
 
@@ -329,26 +362,6 @@ class BinaryFNode(_FNodeBase):
 class UnaryFNode(_FNodeBase):
     """
     Unary factor node: connected to exactly **one** variable node.
-
-    Receives the variable's ensemble, computes a residual
-        r^(i) = y  -  f( x^(i) )
-    and stores it on the shared edge so the variable node can retrieve it.
-
-    Subclasses
-    ----------
-    Override ``_measurement_function`` to implement a concrete observation
-    model  f: R^d → R^m.  Optionally override ``_sensitivity`` to supply an
-    analytic Jacobian (defaults to finite-differences).
-
-    Example
-    -------
-    class MyObsFactor(UnaryFNode):
-        def __init__(self, name, dims, y_obs):
-            super().__init__(name, dims)
-            self.y_obs = y_obs           # (m,)
-
-        def _measurement_function(self, x_ensemble):  # (d, N) → (m, N)
-            return self.y_obs[:, None] - some_sensor_model(x_ensemble)
     """
 
     def __init__(self, name: str, dims: list, gamma: np.ndarray) -> None:
@@ -403,7 +416,7 @@ class FactorGraph(Graph):
         return [n for n in self.nodes if isinstance(n, VNode)]
 
     @property
-    def fnodes(self) -> List[Node]: # _FNodeBase 타입 힌팅 대체
+    def fnodes(self) -> List[Node]: 
         return [n for n in self.nodes if not isinstance(n, VNode)]
 
     def iterate(self, n_iter: int = 1) -> None:
@@ -413,7 +426,7 @@ class FactorGraph(Graph):
         for _ in range(n_iter):
             # ── Step 1: Factor 노드 연산 및 메시지 생성 (z_target 포함) ──
             for fn in self.fnodes:
-                fn.compute_and_send()  # 내부에서 vnode._messages에 저장
+                fn.compute_and_send()  
 
             # ── Step 2: Variable 노드 EKI 업데이트 ──
             for vn in self.vnodes:
@@ -423,4 +436,3 @@ class FactorGraph(Graph):
             for vn in self.vnodes:
                 vn.update_admm_dual()
                 vn.update_penalty()
-

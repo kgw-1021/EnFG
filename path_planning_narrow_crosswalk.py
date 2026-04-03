@@ -116,7 +116,7 @@ def main():
     # 시뮬레이션 파라미터 세팅
     HORIZON = 50
     DT = 0.05
-    MAX_ITER = 100
+    MAX_ITER = 40
     NUM_AGENTS = 4
     
     start_poses, goal_poses = generate_circular_scenario(
